@@ -34,8 +34,8 @@ const candleCommentTextNode = document.getElementById("candleCommentText");
 const candleCommentSaveBtn = document.getElementById("candleCommentSaveBtn");
 const candleCommentDeleteBtn = document.getElementById("candleCommentDeleteBtn");
 const candleCommentCancelBtn = document.getElementById("candleCommentCancelBtn");
-const authUsernameInput = document.getElementById("authUsername");
-const authPasswordInput = document.getElementById("authPassword");
+const authEmail = document.getElementById("authEmail");
+const authPassword = document.getElementById("authPassword");
 const registerBtn = document.getElementById("registerBtn");
 const loginBtn = document.getElementById("loginBtn");
 const logoutBtn = document.getElementById("logoutBtn");
@@ -1347,89 +1347,60 @@ window.addEventListener("beforeunload", () => {
   saveProgressForCurrentUser();
 });
 
+async function checkUser() {
+  const { data } = await supabase.auth.getUser();
+
+  if (data.user) {
+    currentUser = data.user;
+    authStatus.textContent = "Вы вошли: " + currentUser.email;
+  } else {
+    currentUser = null;
+    authStatus.textContent = "Вы не вошли";
+  }
+}
+
 registerBtn.addEventListener("click", async () => {
-  const email = normalizeEmail(authUsernameInput.value);
-  const password = String(authPasswordInput.value || "");
-  if (!email.includes("@")) {
-    window.alert("Введите корректный email.");
+  const email = authEmail.value;
+  const password = authPassword.value;
+
+  const { error } = await supabase.auth.signUp({
+    email,
+    password
+  });
+
+  if (error) {
+    authStatus.textContent = "Ошибка регистрации: " + error.message;
     return;
   }
-  if (password.length < 4) {
-    window.alert("Пароль должен быть минимум 4 символа.");
-    return;
-  }
-  try {
-    const { error: signUpErr } = await supabase.auth.signUp({ email, password });
-    if (signUpErr) throw signUpErr;
-    const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password });
-    if (signInErr) throw signInErr;
-    const auth = await supabase.auth.getUser();
-    const user = auth?.data?.user;
-    currentUser = user?.email || email;
-    if (user?.id) {
-      try {
-        await supabase.from("profiles").upsert({
-          id: user.id,
-          email: user.email || email,
-          created_at: new Date().toISOString()
-        }, { onConflict: "id" });
-      } catch (error) {
-        console.warn("profiles upsert failed during registration, продолжить без профиля:", error);
-      }
-    }
-    authPasswordInput.value = "";
-    setAuthUiState();
-    await saveProgressForCurrentUser();
-  } catch (e) {
-    window.alert(`Не удалось зарегистрироваться: ${e?.message || "ошибка"}`);
-  }
+
+  authStatus.textContent = "Регистрация успешна. Проверьте email.";
 });
 
 loginBtn.addEventListener("click", async () => {
-  const email = normalizeEmail(authUsernameInput.value);
-  const password = String(authPasswordInput.value || "");
-  try {
-    const { error: loginErr } = await supabase.auth.signInWithPassword({ email, password });
-    if (loginErr) throw loginErr;
-    const auth = await supabase.auth.getUser();
-    const user = auth?.data?.user;
-    currentUser = user?.email || email;
-    if (user?.id) {
-      try {
-        await supabase.from("profiles").upsert({
-          id: user.id,
-          email: user.email || email,
-          created_at: new Date().toISOString()
-        }, { onConflict: "id" });
-      } catch (error) {
-        console.warn("profiles upsert failed during login, продолжить без профиля:", error);
-      }
-      const { data, error } = await supabase
-        .from("user_data")
-        .select("data")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      console.log("loadUserData on login result:", { userId: user.id, data, error });
-      if (error) throw error;
-      if (data?.data) {
-        applySnapshot(data.data);
-        updateHud();
-      }
-    }
-    authPasswordInput.value = "";
-    setAuthUiState();
-    render();
-  } catch (_e) {
-    window.alert("Неверный email или пароль.");
+  const email = authEmail.value;
+  const password = authPassword.value;
+
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email,
+    password
+  });
+
+  if (error) {
+    authStatus.textContent = "Ошибка входа: " + error.message;
+    return;
   }
+
+  currentUser = data.user;
+  authStatus.textContent = "Вы вошли: " + currentUser.email;
 });
 
 logoutBtn.addEventListener("click", async () => {
-  await saveProgressForCurrentUser();
-  try { await supabase.auth.signOut(); } catch (_e) { /* ignore */ }
+  await supabase.auth.signOut();
   currentUser = null;
-  setAuthUiState();
+  authStatus.textContent = "Вы вышли";
 });
+
+checkUser();
 
 resizeCanvas();
 initLiveLine();
