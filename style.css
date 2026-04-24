@@ -62,13 +62,6 @@ body {
   touch-action: none;
 }
 
-.timeframes,
-.view-types,
-.candle-timeframes,
-.comment-controls,
-.data-controls,
-.auth-panel,
-.levels-panel,
 .mobile-toolbar,
 #mobileOverlay,
 .mobile-overlay {
