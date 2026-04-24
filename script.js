@@ -238,23 +238,33 @@ function setAuthUiState() {
   }
 }
 
-async function saveProgressForCurrentUser() {
-  if (!currentUser) return;
+async function saveProgressForCurrentUser(snapshot = null) {
+  if (!currentUser) {
+    console.log("saveProgressForCurrentUser: нет залогиненного пользователя");
+    return null;
+  }
   try {
     const auth = await supabase.auth.getUser();
     const userId = auth?.data?.user?.id;
-    if (!userId) return;
+    if (!userId) {
+      console.log("saveProgressForCurrentUser: user id не найден");
+      return null;
+    }
     const payload = {
       user_id: userId,
-      data: getSnapshot(),
+      data: snapshot ?? getSnapshot(),
       updated_at: new Date().toISOString()
     };
-    const { error } = await supabase.from("user_data").upsert(payload, { onConflict: "user_id" });
+    const { data, error } = await supabase.from("user_data").upsert(payload, { onConflict: "user_id" });
+    console.log("saveUserData result:", { userId, data, error });
     if (error) throw error;
-  } catch (_e) {
-    // ignore (offline)
+    return data;
+  } catch (error) {
+    console.error("saveUserData error:", error);
+    return null;
   }
 }
+const saveUserData = saveProgressForCurrentUser;
 
 function resizeCanvas() {
   width = window.innerWidth;
@@ -1357,11 +1367,15 @@ registerBtn.addEventListener("click", async () => {
     const user = auth?.data?.user;
     currentUser = user?.email || email;
     if (user?.id) {
-      await supabase.from("profiles").upsert({
-        id: user.id,
-        email: user.email || email,
-        created_at: new Date().toISOString()
-      }, { onConflict: "id" });
+      try {
+        await supabase.from("profiles").upsert({
+          id: user.id,
+          email: user.email || email,
+          created_at: new Date().toISOString()
+        }, { onConflict: "id" });
+      } catch (error) {
+        console.warn("profiles upsert failed during registration, продолжить без профиля:", error);
+      }
     }
     authPasswordInput.value = "";
     setAuthUiState();
@@ -1381,16 +1395,21 @@ loginBtn.addEventListener("click", async () => {
     const user = auth?.data?.user;
     currentUser = user?.email || email;
     if (user?.id) {
-      await supabase.from("profiles").upsert({
-        id: user.id,
-        email: user.email || email,
-        created_at: new Date().toISOString()
-      }, { onConflict: "id" });
+      try {
+        await supabase.from("profiles").upsert({
+          id: user.id,
+          email: user.email || email,
+          created_at: new Date().toISOString()
+        }, { onConflict: "id" });
+      } catch (error) {
+        console.warn("profiles upsert failed during login, продолжить без профиля:", error);
+      }
       const { data, error } = await supabase
         .from("user_data")
         .select("data")
         .eq("user_id", user.id)
         .maybeSingle();
+      console.log("loadUserData on login result:", { userId: user.id, data, error });
       if (error) throw error;
       if (data?.data) {
         applySnapshot(data.data);
@@ -1425,8 +1444,12 @@ if (location.protocol.startsWith("http")) {
 
 async function loadCurrentUserData() {
   try {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    console.log("Supabase getSession result:", sessionData, sessionError);
+    if (sessionError) throw sessionError;
     const auth = await supabase.auth.getUser();
     const user = auth?.data?.user;
+    console.log("Supabase getUser result:", user);
     if (!user) {
       currentUser = null;
       setAuthUiState();
@@ -1440,6 +1463,7 @@ async function loadCurrentUserData() {
       .select("data")
       .eq("user_id", user.id)
       .maybeSingle();
+    console.log("loadUserData result:", { userId: user.id, data, error });
     if (error) throw error;
     if (data?.data) {
       applySnapshot(data.data);
@@ -1447,13 +1471,25 @@ async function loadCurrentUserData() {
     }
     setAuthUiState();
     render();
-  } catch {
+  } catch (error) {
+    console.error("loadUserData error:", error);
     currentUser = null;
     setAuthUiState();
   }
 }
-loadCurrentUserData();
-supabase.auth.onAuthStateChange(() => {
+async function initializeAuth() {
+  try {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    console.log("Supabase initializeAuth getSession:", sessionData, sessionError);
+    if (sessionError) throw sessionError;
+  } catch (error) {
+    console.error("Supabase initializeAuth error:", error);
+  }
+  await loadCurrentUserData();
+}
+initializeAuth();
+supabase.auth.onAuthStateChange((event, session) => {
+  console.log("Supabase auth state change:", event, session);
   loadCurrentUserData();
 });
 setMode("live");

@@ -7,19 +7,10 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <canvas id="scene"></canvas>
-
-  <div class="mobile-toolbar hidden" id="mobileToolbar">
-    <button type="button" data-mobile-open="modes">Режим</button>
-    <button type="button" data-mobile-open="timeframes">ТФ</button>
-    <button type="button" data-mobile-open="viewTypes">Тип</button>
-    <button type="button" data-mobile-open="candleTimeframes">Свечи</button>
-    <button type="button" data-mobile-open="commentControls">Коммент</button>
-    <button type="button" data-mobile-open="dataControls">Данные</button>
-    <button type="button" data-mobile-open="authPanel">Акк</button>
-    <button type="button" data-mobile-open="levelsPanel">Уровни</button>
+  <div class="pc-only-warning hidden" id="pcOnlyWarning">
+    Этот режим доступен только на ПК. Откройте сайт на компьютере.
   </div>
-  <div class="mobile-overlay hidden" id="mobileOverlay" data-mobile-close="1"></div>
+  <canvas id="scene"></canvas>
 
   <div class="modes" id="modes">
     <button data-mode="live" class="active">Лайв</button>
