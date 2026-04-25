@@ -13,9 +13,6 @@ const addCommentBtn = document.getElementById("addCommentBtn");
 const toggleCommentsBtn = document.getElementById("toggleCommentsBtn");
 const modesNode = document.getElementById("modes");
 const hintNode = document.querySelector(".hint");
-const exportBtn = document.getElementById("exportBtn");
-const importBtn = document.getElementById("importBtn");
-const importInput = document.getElementById("importInput");
 const dataControlsNode = document.getElementById("dataControls") || document.querySelector(".data-controls");
 const shareLinkNode = document.getElementById("shareLink");
 const authPanelNode = document.getElementById("authPanel");
@@ -99,6 +96,8 @@ let selectedViewType = "line";
 let selectedCandleRange = "5m";
 let selectedMode = "live";
 let currentUser = null;
+let isProgressLoaded = false;
+let isApplyingRemoteProgress = false;
 let lastAutosaveAt = 0;
 let totalPoints = 0;
 let levels = [
@@ -226,7 +225,7 @@ function setAuthUiState() {
   registerBtn.classList.toggle("hidden", isLoggedIn);
   loginBtn.classList.toggle("hidden", isLoggedIn);
   logoutBtn.classList.toggle("hidden", !isLoggedIn);
-  authStatus.textContent = isLoggedIn ? `В аккаунте: ${currentUser}` : "Гость";
+  authStatus.textContent = isLoggedIn ? `В аккаунте: ${currentUser.email || currentUser.id}` : "Гость";
   for (const node of appPanelsForAuth) {
     if (!node) continue;
     if (isLoggedIn) node.classList.remove("hidden");
@@ -239,13 +238,13 @@ function setAuthUiState() {
 }
 
 async function saveProgressForCurrentUser(snapshot = null) {
-  if (!currentUser) {
+  if (!currentUser || !isProgressLoaded || isApplyingRemoteProgress) {
     console.log("saveProgressForCurrentUser: нет залогиненного пользователя");
     return null;
   }
   try {
     const auth = await supabase.auth.getUser();
-    const userId = auth?.data?.user?.id;
+    const userId = auth?.data?.user?.id || currentUser.id;
     if (!userId) {
       console.log("saveProgressForCurrentUser: user id не найден");
       return null;
@@ -1293,71 +1292,9 @@ candleCommentDeleteBtn?.addEventListener("click", () => {
   render();
 });
 
-function exportData() {
-  const payload = getSnapshot();
-  payload.exportedAt = Date.now();
-  payload.account = currentUser;
-
-  const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  link.href = url;
-  link.download = `graph-export-${stamp}.json`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-}
-
-function importData(file) {
-  const reader = new FileReader();
-  reader.onload = () => {
-    try {
-      const parsed = JSON.parse(String(reader.result || "{}"));
-      const ok = applySnapshot(parsed);
-      if (!ok) {
-        window.alert("Файл импорта пустой или неверный.");
-        return;
-      }
-      saveProgressForCurrentUser();
-      updateHud();
-      render();
-    } catch (_error) {
-      window.alert("Не удалось прочитать файл импорта.");
-    }
-  };
-  reader.readAsText(file);
-}
-
-exportBtn.addEventListener("click", exportData);
-
-importBtn.addEventListener("click", () => {
-  importInput.value = "";
-  importInput.click();
-});
-
-importInput.addEventListener("change", (event) => {
-  const file = event.target.files?.[0];
-  if (!file) return;
-  importData(file);
-});
-
 window.addEventListener("beforeunload", () => {
   saveProgressForCurrentUser();
 });
-
-async function checkUser() {
-  const { data } = await supabase.auth.getUser();
-
-  if (data.user) {
-    currentUser = data.user;
-    authStatus.textContent = "Вы вошли: " + currentUser.email;
-  } else {
-    currentUser = null;
-    authStatus.textContent = "Вы не вошли";
-  }
-}
 
 registerBtn.addEventListener("click", async () => {
   const email = authEmail.value;
@@ -1379,6 +1316,7 @@ registerBtn.addEventListener("click", async () => {
 loginBtn.addEventListener("click", async () => {
   const email = authEmail.value;
   const password = authPassword.value;
+  isProgressLoaded = false;
 
   const { data, error } = await supabase.auth.signInWithPassword({
     email,
@@ -1392,15 +1330,15 @@ loginBtn.addEventListener("click", async () => {
 
   currentUser = data.user;
   authStatus.textContent = "Вы вошли: " + currentUser.email;
+  await loadCurrentUserData();
 });
 
 logoutBtn.addEventListener("click", async () => {
   await supabase.auth.signOut();
   currentUser = null;
+  isProgressLoaded = false;
   authStatus.textContent = "Вы вышли";
 });
-
-checkUser();
 
 resizeCanvas();
 initLiveLine();
@@ -1414,6 +1352,7 @@ if (location.protocol.startsWith("http")) {
 }
 
 async function loadCurrentUserData() {
+  isProgressLoaded = false;
   try {
     const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
     console.log("Supabase getSession result:", sessionData, sessionError);
@@ -1428,7 +1367,7 @@ async function loadCurrentUserData() {
       setMode("live");
       return;
     }
-    currentUser = user.email || "user";
+    currentUser = user;
     const { data, error } = await supabase
       .from("user_data")
       .select("data")
@@ -1437,13 +1376,18 @@ async function loadCurrentUserData() {
     console.log("loadUserData result:", { userId: user.id, data, error });
     if (error) throw error;
     if (data?.data) {
+      isApplyingRemoteProgress = true;
       applySnapshot(data.data);
+      isApplyingRemoteProgress = false;
       updateHud();
     }
+    isProgressLoaded = true;
     setAuthUiState();
     render();
   } catch (error) {
     console.error("loadUserData error:", error);
+    isApplyingRemoteProgress = false;
+    isProgressLoaded = false;
     currentUser = null;
     setAuthUiState();
   }
