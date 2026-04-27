@@ -39,6 +39,9 @@
     <button id="addCommentBtn" type="button">Комментарий к свече</button>
     <button id="toggleCommentsBtn" type="button">Скрыть комментарии</button>
   </div>
+  <div class="tasks-tab hidden" id="tasksTab">
+    <button id="openTasksBtn" type="button">Задания</button>
+  </div>
 
   <div class="modal hidden" id="candleCommentModal" role="dialog" aria-modal="true" aria-labelledby="candleCommentTitle">
     <div class="modal-backdrop" data-close-modal="1"></div>
@@ -50,6 +53,48 @@
         <button id="candleCommentSaveBtn" type="button">Сохранить</button>
         <button id="candleCommentDeleteBtn" type="button" class="danger">Удалить</button>
         <button id="candleCommentCancelBtn" type="button">Отмена</button>
+      </div>
+    </div>
+  </div>
+  <section class="tasks-page hidden" id="tasksPage">
+    <div class="tasks-page-header">
+      <div>
+        <div class="tasks-page-title">Задания</div>
+        <div class="tasks-page-subtitle">Настройка задач по времени и баллам</div>
+      </div>
+      <button id="closeTasksBtn" type="button">Закрыть</button>
+    </div>
+    <div class="tasks-global-row">
+      <span>Все задания</span>
+      <label class="switch">
+        <input id="tasksGlobalEnabled" type="checkbox" checked>
+        <span></span>
+      </label>
+    </div>
+    <form class="task-form" id="taskForm">
+      <input id="taskTitleInput" type="text" maxlength="60" placeholder="Название задачи *" required>
+      <textarea id="taskDescriptionInput" rows="3" maxlength="300" placeholder="Описание"></textarea>
+      <div class="task-form-grid">
+        <input id="taskRewardInput" type="number" min="0" step="1" placeholder="Баллы за выполнение">
+        <input id="taskPenaltyInput" type="number" min="0" step="1" placeholder="Минус за невыполнение">
+        <input id="taskTimeInput" type="time" required>
+      </div>
+      <button type="submit">Добавить задание</button>
+    </form>
+    <div class="tasks-list" id="tasksList"></div>
+  </section>
+  <div class="modal hidden" id="taskReportModal" role="dialog" aria-modal="true" aria-labelledby="taskReportTitle">
+    <div class="modal-backdrop"></div>
+    <div class="modal-card task-report-card">
+      <div class="modal-title" id="taskReportTitle">Отчет по заданию</div>
+      <div class="modal-subtitle" id="taskReportTime">—</div>
+      <div class="task-report-name" id="taskReportName">—</div>
+      <div class="task-report-description" id="taskReportDescription"></div>
+      <div class="task-report-points" id="taskReportPoints">—</div>
+      <div class="task-report-actions">
+        <button id="taskDoneBtn" type="button" class="success">Да</button>
+        <button id="taskFailedBtn" type="button" class="danger">Нет</button>
+        <button id="taskIgnoreBtn" type="button">Игнорировать</button>
       </div>
     </div>
   </div>
@@ -67,19 +112,28 @@
 
   <div class="levels-panel" id="levelsPanel">
     <div class="levels-title">Уровни</div>
-    <div class="levels-stats">
-      Очки: <span id="pointsValue">0</span> · Уровень: <span id="levelName">—</span>
-    </div>
+    <button class="current-level-card" id="currentLevelToggle" type="button" aria-expanded="false" aria-controls="levelsDetails">
+      <span class="current-level-main">
+        <span class="current-level-label">Мой текущий уровень</span>
+        <span class="current-level-name" id="levelName">—</span>
+      </span>
+      <span class="current-level-side">
+        <span id="currentLevelPoints">0 очк.</span>
+        <span class="current-level-chevron" id="currentLevelChevron">⌄</span>
+      </span>
+    </button>
     <div class="levels-progress">
       <div class="levels-progress-bar" id="levelProgressBar"></div>
     </div>
     <div class="levels-next" id="nextLevelHint">Добавьте уровни для мотивации.</div>
-    <div class="levels-editor">
-      <input id="levelNameInput" type="text" placeholder="Название уровня">
-      <input id="levelPointsInput" type="number" min="0" step="1" placeholder="Очков нужно">
-      <button id="addLevelBtn" type="button">Добавить</button>
+    <div class="levels-details" id="levelsDetails" hidden>
+      <div class="levels-editor">
+        <input id="levelNameInput" type="text" placeholder="Название уровня">
+        <input id="levelPointsInput" type="number" min="0" step="1" placeholder="Очков нужно">
+        <button id="addLevelBtn" type="button">Добавить</button>
+      </div>
+      <div class="levels-list" id="levelsList"></div>
     </div>
-    <div class="levels-list" id="levelsList"></div>
   </div>
   <div class="stats" id="stats">
     <div>Значение Y: <span id="valueY">0.00</span></div>

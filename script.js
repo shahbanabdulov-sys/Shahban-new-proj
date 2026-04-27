@@ -11,14 +11,37 @@ const candleTimeframesNode = document.getElementById("candleTimeframes");
 const commentControlsNode = document.getElementById("commentControls");
 const addCommentBtn = document.getElementById("addCommentBtn");
 const toggleCommentsBtn = document.getElementById("toggleCommentsBtn");
+const tasksTabNode = document.getElementById("tasksTab");
+const openTasksBtn = document.getElementById("openTasksBtn");
+const tasksPageNode = document.getElementById("tasksPage");
+const closeTasksBtn = document.getElementById("closeTasksBtn");
+const tasksGlobalEnabledInput = document.getElementById("tasksGlobalEnabled");
+const taskFormNode = document.getElementById("taskForm");
+const taskTitleInput = document.getElementById("taskTitleInput");
+const taskDescriptionInput = document.getElementById("taskDescriptionInput");
+const taskRewardInput = document.getElementById("taskRewardInput");
+const taskPenaltyInput = document.getElementById("taskPenaltyInput");
+const taskTimeInput = document.getElementById("taskTimeInput");
+const tasksListNode = document.getElementById("tasksList");
+const taskReportModalNode = document.getElementById("taskReportModal");
+const taskReportTimeNode = document.getElementById("taskReportTime");
+const taskReportNameNode = document.getElementById("taskReportName");
+const taskReportDescriptionNode = document.getElementById("taskReportDescription");
+const taskReportPointsNode = document.getElementById("taskReportPoints");
+const taskDoneBtn = document.getElementById("taskDoneBtn");
+const taskFailedBtn = document.getElementById("taskFailedBtn");
+const taskIgnoreBtn = document.getElementById("taskIgnoreBtn");
 const modesNode = document.getElementById("modes");
 const hintNode = document.querySelector(".hint");
 const dataControlsNode = document.getElementById("dataControls") || document.querySelector(".data-controls");
 const shareLinkNode = document.getElementById("shareLink");
 const authPanelNode = document.getElementById("authPanel");
 const levelsPanelNode = document.getElementById("levelsPanel");
-const pointsValueNode = document.getElementById("pointsValue");
+const currentLevelToggleNode = document.getElementById("currentLevelToggle");
 const levelNameNode = document.getElementById("levelName");
+const currentLevelPointsNode = document.getElementById("currentLevelPoints");
+const currentLevelChevronNode = document.getElementById("currentLevelChevron");
+const levelsDetailsNode = document.getElementById("levelsDetails");
 const levelProgressBarNode = document.getElementById("levelProgressBar");
 const nextLevelHintNode = document.getElementById("nextLevelHint");
 const levelNameInput = document.getElementById("levelNameInput");
@@ -45,6 +68,7 @@ const appPanelsForAuth = [
   viewTypesNode,
   candleTimeframesNode,
   commentControlsNode,
+  tasksTabNode,
   dataControlsNode,
   levelsPanelNode,
   mobileToolbarNode
@@ -67,7 +91,7 @@ const speedX = 60;
 const livePoints = [];
 const liveTailLength = 2000;
 const gridStepPx = 60;
-const valueStepPerGrid = 10;
+const valueStepPerGrid = 5;
 
 const pointIntervalMs = 60;
 const maxHistoryMs = 32 * 24 * 60 * 60 * 1000;
@@ -100,11 +124,17 @@ let isProgressLoaded = false;
 let isApplyingRemoteProgress = false;
 let lastAutosaveAt = 0;
 let totalPoints = 0;
+let levelsExpanded = false;
+let tasksGlobalEnabled = true;
+let taskReportQueue = [];
+let activeTaskReport = null;
+let lastTaskCheckAt = 0;
 let levels = [
   { name: "Новичок", points: 0 },
   { name: "Уверенный", points: 200 },
   { name: "Профи", points: 600 },
 ];
+let tasks = [];
 let candleOffset = 0;
 let candleZoom = 1;
 let hoveredCandle = null;
@@ -128,6 +158,47 @@ function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function createTaskId() {
+  return `task-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeTime(value) {
+  const text = String(value || "").trim();
+  return /^\d{2}:\d{2}$/.test(text) ? text : "";
+}
+
+function normalizeTask(item) {
+  const title = String(item?.title || "").trim().slice(0, 60);
+  const time = normalizeTime(item?.time);
+  if (!title || !time) return null;
+  const reports = item?.reports && typeof item.reports === "object" ? item.reports : {};
+  return {
+    id: String(item?.id || createTaskId()),
+    title,
+    description: String(item?.description || "").trim().slice(0, 300),
+    reward: Math.max(0, Math.floor(toSafeNumber(Number(item?.reward), 0))),
+    penalty: Math.max(0, Math.floor(toSafeNumber(Number(item?.penalty), 0))),
+    time,
+    enabled: item?.enabled !== false,
+    reports,
+  };
+}
+
+function getLocalDateKey(timestamp = Date.now()) {
+  const d = new Date(timestamp);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function getScheduledTimestampForDate(time, timestamp = Date.now()) {
+  const [hours, minutes] = normalizeTime(time).split(":").map(Number);
+  const d = new Date(timestamp);
+  d.setHours(hours || 0, minutes || 0, 0, 0);
+  return d.getTime();
+}
+
 function getSnapshot() {
   return {
     version: 1,
@@ -143,6 +214,8 @@ function getSnapshot() {
     candleComments,
     totalPoints,
     levels,
+    tasksGlobalEnabled,
+    tasks,
     history: history.slice(-50000),
   };
 }
@@ -178,6 +251,13 @@ function applySnapshot(parsed) {
       .filter((x) => x.name && Number.isFinite(x.points))
       .sort((a, b) => a.points - b.points);
     if (cleaned.length > 0) levels = cleaned;
+  }
+  tasksGlobalEnabled = parsed.tasksGlobalEnabled !== false;
+  if (Array.isArray(parsed.tasks)) {
+    tasks = parsed.tasks
+      .map(normalizeTask)
+      .filter(Boolean)
+      .sort((a, b) => a.time.localeCompare(b.time));
   }
 
   if (parsed.selectedRange && rangeMap[parsed.selectedRange]) {
@@ -217,6 +297,7 @@ function applySnapshot(parsed) {
 
   initLiveLine();
   renderLevelsUi();
+  renderTasksUi();
   return true;
 }
 
@@ -233,6 +314,8 @@ function setAuthUiState() {
   }
   if (!isLoggedIn) {
     closeMobilePanels();
+    closeTasksPage();
+    closeTaskReportModal();
     hintNode.textContent = "Войдите или зарегистрируйтесь, чтобы открыть график и прогресс.";
   }
 }
@@ -279,7 +362,7 @@ function isMobileLayout() {
 function layoutControls() {
   if (isMobileLayout()) return;
   if (!isMobileLayout()) {
-    for (const node of [modesNode, timeframeNode, viewTypesNode, candleTimeframesNode, commentControlsNode, dataControlsNode, authPanelNode, levelsPanelNode].filter(Boolean)) {
+    for (const node of [modesNode, timeframeNode, viewTypesNode, candleTimeframesNode, commentControlsNode, tasksTabNode, dataControlsNode, authPanelNode, levelsPanelNode].filter(Boolean)) {
       node.style.top = "";
     }
     return;
@@ -289,7 +372,7 @@ function layoutControls() {
   const startTop = 10;
 
   let topLeft = startTop;
-  for (const node of [modesNode, timeframeNode, viewTypesNode, candleTimeframesNode, commentControlsNode]) {
+  for (const node of [modesNode, timeframeNode, viewTypesNode, candleTimeframesNode, commentControlsNode, tasksTabNode]) {
     if (!node || node.classList.contains("hidden")) continue;
     node.style.top = `${topLeft}px`;
     topLeft += node.offsetHeight + gap;
@@ -308,15 +391,21 @@ function renderLevelsUi() {
   if (!Array.isArray(levels)) levels = [];
   const list = levels.slice().sort((a, b) => a.points - b.points);
 
-  pointsValueNode.textContent = String(Math.floor(totalPoints));
-
+  const roundedPoints = Math.floor(totalPoints);
   let current = null;
   for (const lvl of list) {
     if (totalPoints >= lvl.points) current = lvl;
   }
   const next = list.find((lvl) => totalPoints < lvl.points) || null;
 
-  levelNameNode.textContent = current?.name || "—";
+  if (levelNameNode) levelNameNode.textContent = current?.name || "Пока нет уровня";
+  if (currentLevelPointsNode) currentLevelPointsNode.textContent = `${roundedPoints} очк.`;
+  if (currentLevelToggleNode) {
+    currentLevelToggleNode.classList.toggle("expanded", levelsExpanded);
+    currentLevelToggleNode.setAttribute("aria-expanded", String(levelsExpanded));
+  }
+  if (currentLevelChevronNode) currentLevelChevronNode.textContent = levelsExpanded ? "⌃" : "⌄";
+  if (levelsDetailsNode) levelsDetailsNode.hidden = !levelsExpanded;
 
   if (!next) {
     levelProgressBarNode.style.width = list.length ? "100%" : "0%";
@@ -334,11 +423,13 @@ function renderLevelsUi() {
   for (const lvl of list) {
     const row = document.createElement("div");
     row.className = "level-item";
+    const isCurrent = current && lvl.name === current.name && lvl.points === current.points;
+    row.classList.toggle("current", Boolean(isCurrent));
     const meta = document.createElement("div");
     meta.className = "meta";
     meta.textContent = `${lvl.name} `;
     const span = document.createElement("span");
-    span.textContent = `(${lvl.points})`;
+    span.textContent = isCurrent ? `(${lvl.points}) · мой уровень` : `(${lvl.points})`;
     meta.appendChild(span);
     const del = document.createElement("button");
     del.type = "button";
@@ -355,6 +446,179 @@ function renderLevelsUi() {
     row.appendChild(del);
     levelsListNode.appendChild(row);
   }
+}
+
+function renderTasksUi() {
+  if (tasksGlobalEnabledInput) tasksGlobalEnabledInput.checked = tasksGlobalEnabled;
+  if (!tasksListNode) return;
+  const list = tasks.slice().sort((a, b) => a.time.localeCompare(b.time));
+  tasksListNode.innerHTML = "";
+  if (list.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "tasks-empty";
+    empty.textContent = "Заданий пока нет.";
+    tasksListNode.appendChild(empty);
+    return;
+  }
+
+  for (const task of list) {
+    const item = document.createElement("div");
+    item.className = "task-item";
+    item.classList.toggle("disabled", !task.enabled || !tasksGlobalEnabled);
+
+    const head = document.createElement("div");
+    head.className = "task-item-head";
+
+    const meta = document.createElement("div");
+    meta.className = "task-item-meta";
+    const title = document.createElement("div");
+    title.className = "task-item-title";
+    title.textContent = task.title;
+    const sub = document.createElement("div");
+    sub.className = "task-item-sub";
+    sub.textContent = `${task.time} · +${task.reward} / -${task.penalty}`;
+    meta.appendChild(title);
+    meta.appendChild(sub);
+
+    const switchLabel = document.createElement("label");
+    switchLabel.className = "switch";
+    const switchInput = document.createElement("input");
+    switchInput.type = "checkbox";
+    switchInput.checked = task.enabled;
+    switchInput.addEventListener("change", () => {
+      task.enabled = switchInput.checked;
+      saveProgressForCurrentUser();
+      renderTasksUi();
+      checkDueTasks(true);
+    });
+    const switchSpan = document.createElement("span");
+    switchLabel.appendChild(switchInput);
+    switchLabel.appendChild(switchSpan);
+
+    head.appendChild(meta);
+    head.appendChild(switchLabel);
+    item.appendChild(head);
+
+    if (task.description) {
+      const desc = document.createElement("div");
+      desc.className = "task-item-description";
+      desc.textContent = task.description;
+      item.appendChild(desc);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "task-item-actions";
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "Удалить";
+    remove.addEventListener("click", () => {
+      const ok = window.confirm(`Удалить задание “${task.title}”?`);
+      if (!ok) return;
+      tasks = tasks.filter((itemTask) => itemTask.id !== task.id);
+      taskReportQueue = taskReportQueue.filter((itemTask) => itemTask.id !== task.id);
+      if (activeTaskReport?.id === task.id) closeTaskReportModal();
+      saveProgressForCurrentUser();
+      renderTasksUi();
+    });
+    actions.appendChild(remove);
+    item.appendChild(actions);
+
+    tasksListNode.appendChild(item);
+  }
+}
+
+function openTasksPage() {
+  renderTasksUi();
+  tasksPageNode?.classList.remove("hidden");
+}
+
+function closeTasksPage() {
+  tasksPageNode?.classList.add("hidden");
+}
+
+function insertHistoryPoint(timestamp, value) {
+  history.push({ t: timestamp, y: value });
+  history.sort((a, b) => a.t - b.t);
+  lastPointAt = Math.max(lastPointAt, timestamp);
+  const minAllowed = Date.now() - maxHistoryMs;
+  while (history.length > 2 && history[1].t < minAllowed) {
+    history.shift();
+  }
+}
+
+function applyTaskScore(deltaPoints, timestamp) {
+  const nextPoints = Math.max(0, totalPoints + deltaPoints);
+  totalPoints = nextPoints;
+  previousValue = currentValue;
+  currentValue = -(nextPoints / valueStepPerGrid) * gridStepPx;
+  insertHistoryPoint(timestamp, currentValue);
+  addHistoryPoint(Date.now());
+  initLiveLine();
+  renderLevelsUi();
+  updateHud();
+  render();
+}
+
+function getDueTasks(now = Date.now()) {
+  if (!tasksGlobalEnabled) return [];
+  const today = getLocalDateKey(now);
+  return tasks
+    .filter((task) => {
+      if (!task.enabled) return false;
+      if (task.reports?.[today]) return false;
+      return getScheduledTimestampForDate(task.time, now) <= now;
+    })
+    .sort((a, b) => a.time.localeCompare(b.time));
+}
+
+function checkDueTasks(force = false) {
+  if (!currentUser || !isProgressLoaded) return;
+  const now = Date.now();
+  if (!force && now - lastTaskCheckAt < 5000) return;
+  lastTaskCheckAt = now;
+  if (activeTaskReport) return;
+  taskReportQueue = getDueTasks(now);
+  openNextTaskReport();
+}
+
+function openNextTaskReport() {
+  if (activeTaskReport || !taskReportModalNode) return;
+  const next = taskReportQueue.shift();
+  if (!next) return;
+  activeTaskReport = next;
+  const scheduledAt = getScheduledTimestampForDate(next.time);
+  taskReportTimeNode.textContent = `Нужно было выполнить: ${formatOpenTime(scheduledAt)}`;
+  taskReportNameNode.textContent = next.title;
+  taskReportDescriptionNode.textContent = next.description || "";
+  taskReportDescriptionNode.classList.toggle("hidden", !next.description);
+  taskReportPointsNode.textContent = `Да: +${next.reward} · Нет: -${next.penalty} · Игнор: 0`;
+  taskReportModalNode.classList.remove("hidden");
+}
+
+function closeTaskReportModal() {
+  taskReportModalNode?.classList.add("hidden");
+  activeTaskReport = null;
+}
+
+function answerActiveTask(status) {
+  if (!activeTaskReport) return;
+  const task = tasks.find((item) => item.id === activeTaskReport.id);
+  if (!task) {
+    closeTaskReportModal();
+    openNextTaskReport();
+    return;
+  }
+  const now = Date.now();
+  const dateKey = getLocalDateKey(now);
+  const scheduledAt = getScheduledTimestampForDate(task.time, now);
+  task.reports = task.reports && typeof task.reports === "object" ? task.reports : {};
+  task.reports[dateKey] = { status, answeredAt: now, scheduledAt };
+  if (status === "done") applyTaskScore(task.reward, scheduledAt);
+  if (status === "failed") applyTaskScore(-task.penalty, scheduledAt);
+  closeTaskReportModal();
+  saveProgressForCurrentUser();
+  renderTasksUi();
+  openNextTaskReport();
 }
 
 function initLiveLine() {
@@ -495,7 +759,7 @@ function findCandleByScreenX(screenX) {
 
 function closeMobilePanels() {
   if (mobileOverlayNode) mobileOverlayNode.classList.add("hidden");
-  for (const node of [modesNode, timeframeNode, viewTypesNode, candleTimeframesNode, commentControlsNode, dataControlsNode, authPanelNode, levelsPanelNode]) {
+  for (const node of [modesNode, timeframeNode, viewTypesNode, candleTimeframesNode, commentControlsNode, tasksTabNode, dataControlsNode, authPanelNode, levelsPanelNode]) {
     node?.classList.remove("mobile-open");
   }
 }
@@ -508,6 +772,7 @@ function openMobilePanel(id) {
     viewTypes: viewTypesNode,
     candleTimeframes: candleTimeframesNode,
     commentControls: commentControlsNode,
+    tasksTab: tasksTabNode,
     dataControls: dataControlsNode,
     authPanel: authPanelNode,
     levelsPanel: levelsPanelNode,
@@ -988,6 +1253,7 @@ function frame(now) {
   } else {
     pendingVerticalDelta = 0;
   }
+  checkDueTasks();
   addHistoryPoint(Date.now());
   if (currentUser && now - lastAutosaveAt >= AUTOSAVE_MS) {
     saveProgressForCurrentUser();
@@ -1231,11 +1497,51 @@ toggleCommentsBtn.addEventListener("click", () => {
   render();
 });
 
+openTasksBtn?.addEventListener("click", openTasksPage);
+closeTasksBtn?.addEventListener("click", closeTasksPage);
+
+tasksGlobalEnabledInput?.addEventListener("change", () => {
+  tasksGlobalEnabled = tasksGlobalEnabledInput.checked;
+  saveProgressForCurrentUser();
+  renderTasksUi();
+  if (tasksGlobalEnabled) checkDueTasks(true);
+});
+
+taskFormNode?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const task = normalizeTask({
+    title: taskTitleInput?.value,
+    description: taskDescriptionInput?.value,
+    reward: Number(taskRewardInput?.value),
+    penalty: Number(taskPenaltyInput?.value),
+    time: taskTimeInput?.value,
+    enabled: true,
+    reports: {},
+  });
+  if (!task) return;
+  tasks = tasks.concat(task).sort((a, b) => a.time.localeCompare(b.time));
+  taskFormNode.reset();
+  saveProgressForCurrentUser();
+  renderTasksUi();
+  checkDueTasks(true);
+});
+
+taskDoneBtn?.addEventListener("click", () => answerActiveTask("done"));
+taskFailedBtn?.addEventListener("click", () => answerActiveTask("failed"));
+taskIgnoreBtn?.addEventListener("click", () => answerActiveTask("ignored"));
+
+currentLevelToggleNode?.addEventListener("click", () => {
+  levelsExpanded = !levelsExpanded;
+  renderLevelsUi();
+  layoutControls();
+});
+
 addLevelBtn?.addEventListener("click", () => {
   const name = String(levelNameInput?.value || "").trim().slice(0, 30);
   const ptsRaw = Number(levelPointsInput?.value);
   const pts = Math.max(0, Math.floor(toSafeNumber(ptsRaw, NaN)));
   if (!name || !Number.isFinite(pts)) return;
+  levelsExpanded = true;
   levels = levels.concat([{ name, points: pts }]).sort((a, b) => a.points - b.points);
   if (levelNameInput) levelNameInput.value = "";
   if (levelPointsInput) levelPointsInput.value = "";
@@ -1338,6 +1644,7 @@ logoutBtn.addEventListener("click", async () => {
   currentUser = null;
   isProgressLoaded = false;
   authStatus.textContent = "Вы вышли";
+  setAuthUiState();
 });
 
 resizeCanvas();
@@ -1345,6 +1652,7 @@ initLiveLine();
 addHistoryPoint(Date.now());
 layoutControls();
 renderLevelsUi();
+renderTasksUi();
 if (location.protocol.startsWith("http")) {
   setShareLink(`Ссылка: ${location.origin}/`);
 } else {
@@ -1384,6 +1692,7 @@ async function loadCurrentUserData() {
     isProgressLoaded = true;
     setAuthUiState();
     render();
+    checkDueTasks(true);
   } catch (error) {
     console.error("loadUserData error:", error);
     isApplyingRemoteProgress = false;
