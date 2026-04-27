@@ -47,6 +47,10 @@
     <button id="openTasksBtn" type="button">Задания <span id="tasksTabBadge">0</span></button>
   </div>
 
+  <div class="sounds-tab hidden" id="soundsTab">
+    <button id="openSoundsBtn" type="button">Р—РІСѓРєРё <span id="soundsTabBadge">0</span></button>
+  </div>
+
   <div class="modal hidden" id="candleCommentModal" role="dialog" aria-modal="true" aria-labelledby="candleCommentTitle">
     <div class="modal-backdrop" data-close-modal="1"></div>
     <div class="modal-card">
@@ -100,6 +104,34 @@
       <button type="submit">Добавить задание</button>
     </form>
     <div class="tasks-list" id="tasksList"></div>
+  </section>
+  <section class="sounds-page hidden" id="soundsPage">
+    <div class="sounds-page-header">
+      <div>
+        <div class="sounds-page-title">Р—РІСѓРєРё</div>
+        <div class="sounds-page-subtitle">РђСѓРґРёРѕР·Р°РїРёСЃРё РґР»СЏ С„РѕРЅРѕРІРѕРіРѕ РІРѕСЃРїСЂРѕРёР·РІРµРґРµРЅРёСЏ</div>
+      </div>
+      <button id="closeSoundsBtn" type="button">Р—Р°РєСЂС‹С‚СЊ</button>
+    </div>
+    <div class="sounds-global-row">
+      <span>РџСЂРѕРёРіСЂС‹РІР°С‚СЊ Р·РІСѓРєРё</span>
+      <label class="switch">
+        <input id="soundsEnabled" type="checkbox">
+        <span></span>
+      </label>
+    </div>
+    <div class="sounds-controls">
+      <label>
+        <span>Р“СЂРѕРјРєРѕСЃС‚СЊ</span>
+        <input id="soundVolumeInput" type="range" min="0" max="1" step="0.05" value="0.65">
+      </label>
+      <label class="sound-upload">
+        <span>Р”РѕР±Р°РІРёС‚СЊ Р°СѓРґРёРѕ</span>
+        <input id="soundFileInput" type="file" accept="audio/*" multiple>
+      </label>
+      <div id="soundsStatus" class="sounds-status">Р—Р°РїРёСЃРµР№ РїРѕРєР° РЅРµС‚.</div>
+    </div>
+    <div class="sounds-list" id="soundsList"></div>
   </section>
   <div class="modal hidden" id="taskReportModal" role="dialog" aria-modal="true" aria-labelledby="taskReportTitle">
     <div class="modal-backdrop"></div>

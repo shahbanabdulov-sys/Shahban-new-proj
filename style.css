@@ -191,7 +191,8 @@ body {
   max-width: calc(100vw - 28px);
 }
 
-.tasks-tab {
+.tasks-tab,
+.sounds-tab {
   position: fixed;
   top: 234px;
   left: 50%;
@@ -205,10 +206,15 @@ body {
   max-width: calc(100vw - 28px);
 }
 
+.sounds-tab {
+  top: 278px;
+}
+
 .view-types button,
 .candle-timeframes button,
 .comment-controls button,
-.tasks-tab button {
+.tasks-tab button,
+.sounds-tab button {
   border: 1px solid rgba(130, 145, 230, 0.4);
   background: rgba(24, 30, 58, 0.9);
   color: #d9ddff;
@@ -218,7 +224,8 @@ body {
   cursor: pointer;
 }
 
-.tasks-tab button span {
+.tasks-tab button span,
+.sounds-tab button span {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -477,6 +484,7 @@ body {
   .candle-timeframes,
   .comment-controls,
   .tasks-tab,
+  .sounds-tab,
   .data-controls,
   .auth-panel,
   .levels-panel {
@@ -489,6 +497,7 @@ body {
   .candle-timeframes.mobile-open,
   .comment-controls.mobile-open,
   .tasks-tab.mobile-open,
+  .sounds-tab.mobile-open,
   .data-controls.mobile-open,
   .auth-panel.mobile-open {
     display: flex;
@@ -512,7 +521,8 @@ body {
 }
 
 @media (max-width: 720px) {
-  .tasks-page {
+  .tasks-page,
+  .sounds-page {
     padding: 14px;
   }
 
@@ -522,8 +532,14 @@ body {
     grid-template-columns: 1fr;
   }
 
-  .tasks-page-header {
+  .tasks-page-header,
+  .sounds-page-header {
     align-items: flex-start;
+  }
+
+  .sound-item {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .app-brand {
@@ -641,7 +657,8 @@ body {
   background: rgba(255, 125, 150, 0.12);
 }
 
-.tasks-page {
+.tasks-page,
+.sounds-page {
   position: fixed;
   inset: 0;
   z-index: 45;
@@ -650,7 +667,8 @@ body {
   background: rgba(10, 13, 27, 0.97);
 }
 
-.tasks-page-header {
+.tasks-page-header,
+.sounds-page-header {
   max-width: 860px;
   margin: 0 auto 14px;
   display: flex;
@@ -659,22 +677,27 @@ body {
   gap: 12px;
 }
 
-.tasks-page-title {
+.tasks-page-title,
+.sounds-page-title {
   font-size: 22px;
   font-weight: 800;
   color: #ffffff;
 }
 
-.tasks-page-subtitle {
+.tasks-page-subtitle,
+.sounds-page-subtitle {
   margin-top: 3px;
   color: #b8c2ff;
   font-size: 13px;
 }
 
 .tasks-page-header button,
+.sounds-page-header button,
 .task-form button,
 .task-item-actions button,
-.task-report-actions button {
+.task-report-actions button,
+.sounds-controls button,
+.sound-item button {
   border: 1px solid rgba(130, 145, 230, 0.4);
   background: rgba(24, 30, 58, 0.9);
   color: #d9ddff;
@@ -685,14 +708,18 @@ body {
 }
 
 .tasks-global-row,
+.sounds-global-row,
 .tasks-summary,
 .task-form,
-.tasks-list {
+.tasks-list,
+.sounds-controls,
+.sounds-list {
   max-width: 860px;
   margin: 0 auto 12px;
 }
 
-.tasks-global-row {
+.tasks-global-row,
+.sounds-global-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -701,6 +728,85 @@ body {
   border-radius: 8px;
   background: rgba(12, 16, 33, 0.78);
   font-weight: 700;
+}
+
+.sounds-controls {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(108, 122, 204, 0.35);
+  border-radius: 8px;
+  background: rgba(12, 16, 33, 0.78);
+}
+
+.sounds-controls label {
+  display: grid;
+  gap: 6px;
+  color: #b8c2ff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sounds-controls input[type="range"],
+.sounds-controls input[type="file"] {
+  width: 100%;
+}
+
+.sounds-status {
+  color: #d9ddff;
+  font-size: 12px;
+}
+
+.sounds-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 24px;
+}
+
+.sounds-empty,
+.sound-item {
+  border: 1px solid rgba(108, 122, 204, 0.35);
+  border-radius: 8px;
+  background: rgba(12, 16, 33, 0.78);
+}
+
+.sounds-empty {
+  padding: 14px;
+  color: #b8c2ff;
+}
+
+.sound-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.sound-item-meta {
+  min-width: 0;
+}
+
+.sound-item-name {
+  overflow: hidden;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sound-item-sub {
+  margin-top: 4px;
+  color: #b8c2ff;
+  font-size: 12px;
+}
+
+.sound-item button {
+  border-color: rgba(255, 125, 150, 0.55);
+  background: rgba(255, 125, 150, 0.12);
+  flex: 0 0 auto;
 }
 
 .tasks-summary {

@@ -14,9 +14,19 @@ const addCommentBtn = document.getElementById("addCommentBtn");
 const toggleCommentsBtn = document.getElementById("toggleCommentsBtn");
 const tasksTabNode = document.getElementById("tasksTab");
 const openTasksBtn = document.getElementById("openTasksBtn");
+const soundsTabNode = document.getElementById("soundsTab");
+const openSoundsBtn = document.getElementById("openSoundsBtn");
 const tasksPageNode = document.getElementById("tasksPage");
 const closeTasksBtn = document.getElementById("closeTasksBtn");
+const soundsPageNode = document.getElementById("soundsPage");
+const closeSoundsBtn = document.getElementById("closeSoundsBtn");
 const tasksGlobalEnabledInput = document.getElementById("tasksGlobalEnabled");
+const soundsEnabledInput = document.getElementById("soundsEnabled");
+const soundVolumeInput = document.getElementById("soundVolumeInput");
+const soundFileInput = document.getElementById("soundFileInput");
+const soundsListNode = document.getElementById("soundsList");
+const soundsTabBadgeNode = document.getElementById("soundsTabBadge");
+const soundsStatusNode = document.getElementById("soundsStatus");
 const taskFormNode = document.getElementById("taskForm");
 const taskTitleInput = document.getElementById("taskTitleInput");
 const taskDescriptionInput = document.getElementById("taskDescriptionInput");
@@ -75,6 +85,7 @@ const appPanelsForAuth = [
   candleTimeframesNode,
   commentControlsNode,
   tasksTabNode,
+  soundsTabNode,
   dataControlsNode,
   levelsPanelNode,
   mobileToolbarNode
@@ -135,6 +146,13 @@ let tasksGlobalEnabled = true;
 let taskReportQueue = [];
 let activeTaskReport = null;
 let lastTaskCheckAt = 0;
+let soundsEnabled = false;
+let soundVolume = 0.65;
+let soundRecords = [];
+let soundDbPromise = null;
+let soundCurrentUrl = null;
+let soundCurrentIndex = 0;
+let isSoundLoopStarting = false;
 let levels = [
   { name: "Новичок", points: 0 },
   { name: "Уверенный", points: 200 },
@@ -155,6 +173,17 @@ let lastCandleHitboxes = [];
 let commentEditingCandleTime = null;
 
 const AUTOSAVE_MS = 1500;
+const LOCAL_PROGRESS_PREFIX = "productiv-line-progress:";
+const SOUND_DB_NAME = "productiv-line-sounds";
+const SOUND_STORE_NAME = "sounds";
+
+let saveInFlight = false;
+let pendingCloudSaveSnapshot = null;
+let latestLoadToken = 0;
+let lastSessionUserId = null;
+
+const soundPlayer = new Audio();
+soundPlayer.preload = "auto";
 
 function toSafeNumber(value, fallback = 0) {
   return Number.isFinite(value) ? value : fallback;
@@ -162,6 +191,51 @@ function toSafeNumber(value, fallback = 0) {
 
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+function getLocalProgressKey(userId) {
+  return `${LOCAL_PROGRESS_PREFIX}${userId}`;
+}
+
+function getSnapshotSavedAt(snapshot) {
+  const numericSavedAt = Number(snapshot?.savedAt);
+  if (Number.isFinite(numericSavedAt)) return numericSavedAt;
+  const parsedSavedAt = Date.parse(snapshot?.savedAt || "");
+  return Number.isFinite(parsedSavedAt) ? parsedSavedAt : 0;
+}
+
+function readLocalSnapshotForUser(userId) {
+  try {
+    const raw = localStorage.getItem(getLocalProgressKey(userId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch (error) {
+    console.warn("readLocalSnapshotForUser error:", error);
+    return null;
+  }
+}
+
+function writeLocalSnapshotForUser(userId, snapshot) {
+  try {
+    localStorage.setItem(getLocalProgressKey(userId), JSON.stringify(snapshot));
+  } catch (error) {
+    console.warn("writeLocalSnapshotForUser error:", error);
+  }
+}
+
+function getNewestSnapshot(...snapshots) {
+  return snapshots
+    .filter((snapshot) => snapshot && typeof snapshot === "object")
+    .sort((a, b) => getSnapshotSavedAt(b) - getSnapshotSavedAt(a))[0] || null;
+}
+
+function saveLocalProgressForCurrentUser(snapshot = null) {
+  const userId = currentUser?.id;
+  if (!userId || !isProgressLoaded || isApplyingRemoteProgress) return null;
+  const nextSnapshot = snapshot ?? getSnapshot();
+  writeLocalSnapshotForUser(userId, nextSnapshot);
+  return nextSnapshot;
 }
 
 function createTaskId() {
@@ -222,6 +296,8 @@ function getSnapshot() {
     levels,
     tasksGlobalEnabled,
     tasks,
+    soundsEnabled,
+    soundVolume,
     history: history.slice(-50000),
   };
 }
@@ -265,6 +341,8 @@ function applySnapshot(parsed) {
       .filter(Boolean)
       .sort((a, b) => a.time.localeCompare(b.time));
   }
+  soundsEnabled = parsed.soundsEnabled === true;
+  soundVolume = Math.max(0, Math.min(1, toSafeNumber(Number(parsed.soundVolume), 0.65)));
 
   if (parsed.selectedRange && rangeMap[parsed.selectedRange]) {
     selectedRange = parsed.selectedRange;
@@ -304,24 +382,31 @@ function applySnapshot(parsed) {
   initLiveLine();
   renderLevelsUi();
   renderTasksUi();
+  renderSoundsUi();
+  updateSoundPlayback();
   return true;
 }
 
 function setAuthUiState() {
   const isLoggedIn = Boolean(currentUser);
+  const canUseApp = isLoggedIn && isProgressLoaded;
   registerBtn.classList.toggle("hidden", isLoggedIn);
   loginBtn.classList.toggle("hidden", isLoggedIn);
   logoutBtn.classList.toggle("hidden", !isLoggedIn);
-  authStatus.textContent = isLoggedIn ? `В аккаунте: ${currentUser.email || currentUser.id}` : "Гость";
+  authStatus.textContent = isLoggedIn
+    ? (isProgressLoaded ? `В аккаунте: ${currentUser.email || currentUser.id}` : "Загрузка аккаунта...")
+    : "Гость";
   for (const node of appPanelsForAuth) {
     if (!node) continue;
-    if (isLoggedIn) node.classList.remove("hidden");
+    if (canUseApp) node.classList.remove("hidden");
     else node.classList.add("hidden");
   }
   if (!isLoggedIn) {
     closeMobilePanels();
     closeTasksPage();
+    closeSoundsPage();
     closeTaskReportModal();
+    stopSoundLoop();
     hintNode.textContent = "Войдите или зарегистрируйтесь, чтобы открыть график и прогресс.";
   }
 }
@@ -331,24 +416,41 @@ async function saveProgressForCurrentUser(snapshot = null) {
     console.log("saveProgressForCurrentUser: нет залогиненного пользователя");
     return null;
   }
+  const snapshotToSave = saveLocalProgressForCurrentUser(snapshot);
+  if (!snapshotToSave) return null;
+  pendingCloudSaveSnapshot = snapshotToSave;
+  if (saveInFlight) return null;
+
+  saveInFlight = true;
   try {
     const userId = currentUser.id;
     if (!userId) {
       console.log("saveProgressForCurrentUser: user id не найден");
       return null;
     }
-    const payload = {
-      user_id: userId,
-      data: snapshot ?? getSnapshot(),
-      updated_at: new Date().toISOString()
-    };
-    const { data, error } = await supabase.from("user_data").upsert(payload, { onConflict: "user_id" });
-    console.log("saveUserData result:", { userId, data, error });
-    if (error) throw error;
-    return data;
+    let lastData = null;
+    while (pendingCloudSaveSnapshot) {
+      const queuedSnapshot = pendingCloudSaveSnapshot;
+      pendingCloudSaveSnapshot = null;
+      const payload = {
+        user_id: userId,
+        data: queuedSnapshot,
+        updated_at: new Date().toISOString()
+      };
+      const { data, error } = await supabase.from("user_data").upsert(payload, { onConflict: "user_id" });
+      console.log("saveUserData result:", { userId, savedAt: queuedSnapshot.savedAt, data, error });
+      if (error) throw error;
+      lastData = data;
+    }
+    return lastData;
   } catch (error) {
     console.error("saveUserData error:", error);
     return null;
+  } finally {
+    saveInFlight = false;
+    if (pendingCloudSaveSnapshot && currentUser?.id) {
+      setTimeout(() => saveProgressForCurrentUser(pendingCloudSaveSnapshot), 0);
+    }
   }
 }
 const saveUserData = saveProgressForCurrentUser;
@@ -367,7 +469,7 @@ function isMobileLayout() {
 function layoutControls() {
   if (isMobileLayout()) return;
   if (!isMobileLayout()) {
-    for (const node of [modesNode, timeframeNode, viewTypesNode, candleTimeframesNode, commentControlsNode, tasksTabNode, dataControlsNode, authPanelNode, levelsPanelNode].filter(Boolean)) {
+    for (const node of [modesNode, timeframeNode, viewTypesNode, candleTimeframesNode, commentControlsNode, tasksTabNode, soundsTabNode, dataControlsNode, authPanelNode, levelsPanelNode].filter(Boolean)) {
       node.style.top = "";
     }
     return;
@@ -377,7 +479,7 @@ function layoutControls() {
   const startTop = 10;
 
   let topLeft = startTop;
-  for (const node of [modesNode, timeframeNode, viewTypesNode, candleTimeframesNode, commentControlsNode, tasksTabNode]) {
+  for (const node of [modesNode, timeframeNode, viewTypesNode, candleTimeframesNode, commentControlsNode, tasksTabNode, soundsTabNode]) {
     if (!node || node.classList.contains("hidden")) continue;
     node.style.top = `${topLeft}px`;
     topLeft += node.offsetHeight + gap;
@@ -560,6 +662,188 @@ function openTasksPage() {
 function closeTasksPage() {
   tasksPageNode?.classList.add("hidden");
 }
+
+function openSoundsPage() {
+  renderSoundsUi();
+  soundsPageNode?.classList.remove("hidden");
+}
+
+function closeSoundsPage() {
+  soundsPageNode?.classList.add("hidden");
+}
+
+function createSoundId() {
+  return `sound-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes) || 0;
+  if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function openSoundDb() {
+  if (soundDbPromise) return soundDbPromise;
+  soundDbPromise = new Promise((resolve, reject) => {
+    if (!("indexedDB" in window)) {
+      reject(new Error("IndexedDB is not available"));
+      return;
+    }
+    const request = indexedDB.open(SOUND_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      const store = db.objectStoreNames.contains(SOUND_STORE_NAME)
+        ? request.transaction.objectStore(SOUND_STORE_NAME)
+        : db.createObjectStore(SOUND_STORE_NAME, { keyPath: "id" });
+      if (!store.indexNames.contains("userId")) store.createIndex("userId", "userId", { unique: false });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("IndexedDB open failed"));
+  });
+  return soundDbPromise;
+}
+
+async function readSoundRecordsForUser(userId) {
+  try {
+    const db = await openSoundDb();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(SOUND_STORE_NAME, "readonly");
+      const store = tx.objectStore(SOUND_STORE_NAME);
+      const index = store.index("userId");
+      const request = index.getAll(userId);
+      request.onsuccess = () => resolve((request.result || []).sort((a, b) => a.createdAt - b.createdAt));
+      request.onerror = () => reject(request.error);
+    });
+  } catch (error) {
+    console.warn("readSoundRecordsForUser error:", error);
+    return [];
+  }
+}
+
+async function writeSoundRecord(record) {
+  const db = await openSoundDb();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(SOUND_STORE_NAME, "readwrite");
+    tx.objectStore(SOUND_STORE_NAME).put(record);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function deleteSoundRecord(id) {
+  const db = await openSoundDb();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(SOUND_STORE_NAME, "readwrite");
+    tx.objectStore(SOUND_STORE_NAME).delete(id);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function loadSoundsForCurrentUser() {
+  if (!currentUser?.id) {
+    soundRecords = [];
+    renderSoundsUi();
+    return;
+  }
+  soundRecords = await readSoundRecordsForUser(currentUser.id);
+  renderSoundsUi();
+  updateSoundPlayback();
+}
+
+function renderSoundsUi() {
+  if (soundsEnabledInput) soundsEnabledInput.checked = soundsEnabled;
+  if (soundVolumeInput) soundVolumeInput.value = String(soundVolume);
+  if (soundsTabBadgeNode) soundsTabBadgeNode.textContent = String(soundRecords.length);
+  if (soundsStatusNode) {
+    if (!soundRecords.length) {
+      soundsStatusNode.textContent = "Р—Р°РїРёСЃРµР№ РїРѕРєР° РЅРµС‚.";
+    } else if (soundsEnabled) {
+      soundsStatusNode.textContent = "Р—РІСѓРєРё РІРєР»СЋС‡РµРЅС‹. РќР° С‚РµР»РµС„РѕРЅРµ РёРЅРѕРіРґР° РЅСѓР¶РЅРѕ РЅР°Р¶Р°С‚СЊ РїРµСЂРµРєР»СЋС‡Р°С‚РµР»СЊ РїРѕСЃР»Рµ РІРѕР·РІСЂР°С‚Р° РЅР° СЃР°Р№С‚.";
+    } else {
+      soundsStatusNode.textContent = "Р—РІСѓРєРё РІС‹РєР»СЋС‡РµРЅС‹.";
+    }
+  }
+  if (!soundsListNode) return;
+  soundsListNode.innerHTML = "";
+  if (!soundRecords.length) {
+    const empty = document.createElement("div");
+    empty.className = "sounds-empty";
+    empty.textContent = "Р”РѕР±Р°РІСЊС‚Рµ Р°СѓРґРёРѕС„Р°Р№Р»С‹, Рё РѕРЅРё РѕСЃС‚Р°РЅСѓС‚СЃСЏ РїРѕСЃР»Рµ РѕР±РЅРѕРІР»РµРЅРёСЏ СЃС‚СЂР°РЅРёС†С‹.";
+    soundsListNode.appendChild(empty);
+    return;
+  }
+  for (const record of soundRecords) {
+    const item = document.createElement("div");
+    item.className = "sound-item";
+    const meta = document.createElement("div");
+    meta.className = "sound-item-meta";
+    const name = document.createElement("div");
+    name.className = "sound-item-name";
+    name.textContent = record.name || "audio";
+    const sub = document.createElement("div");
+    sub.className = "sound-item-sub";
+    sub.textContent = formatBytes(record.size);
+    meta.appendChild(name);
+    meta.appendChild(sub);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "РЈРґР°Р»РёС‚СЊ";
+    remove.addEventListener("click", async () => {
+      await deleteSoundRecord(record.id);
+      soundRecords = soundRecords.filter((itemRecord) => itemRecord.id !== record.id);
+      soundCurrentIndex = 0;
+      renderSoundsUi();
+      updateSoundPlayback();
+    });
+    item.appendChild(meta);
+    item.appendChild(remove);
+    soundsListNode.appendChild(item);
+  }
+}
+
+function stopSoundLoop() {
+  soundPlayer.pause();
+  soundPlayer.removeAttribute("src");
+  soundPlayer.load();
+  if (soundCurrentUrl) URL.revokeObjectURL(soundCurrentUrl);
+  soundCurrentUrl = null;
+  isSoundLoopStarting = false;
+}
+
+function playNextSound() {
+  if (!soundsEnabled || !soundRecords.length) {
+    stopSoundLoop();
+    return;
+  }
+  const record = soundRecords[soundCurrentIndex % soundRecords.length];
+  soundCurrentIndex = (soundCurrentIndex + 1) % soundRecords.length;
+  if (soundCurrentUrl) URL.revokeObjectURL(soundCurrentUrl);
+  soundCurrentUrl = URL.createObjectURL(record.blob);
+  soundPlayer.src = soundCurrentUrl;
+  soundPlayer.volume = soundVolume;
+  soundPlayer.play().catch((error) => {
+    console.warn("sound playback blocked:", error);
+    stopSoundLoop();
+    if (soundsStatusNode) {
+      soundsStatusNode.textContent = "Р‘СЂР°СѓР·РµСЂ Р·Р°Р±Р»РѕРєРёСЂРѕРІР°Р» Р°РІС‚РѕР·Р°РїСѓСЃРє. РћС‚РєСЂРѕР№С‚Рµ РІРєР»Р°РґРєСѓ Рё РЅР°Р¶РјРёС‚Рµ РїРµСЂРµРєР»СЋС‡Р°С‚РµР»СЊ Р·РІСѓРєРѕРІ.";
+    }
+  });
+}
+
+function updateSoundPlayback() {
+  soundPlayer.volume = soundVolume;
+  if (!soundsEnabled || !soundRecords.length) {
+    stopSoundLoop();
+    return;
+  }
+  if (isSoundLoopStarting || !soundPlayer.paused) return;
+  isSoundLoopStarting = true;
+  playNextSound();
+  isSoundLoopStarting = false;
+}
+
+soundPlayer.addEventListener("ended", playNextSound);
 
 function insertHistoryPoint(timestamp, value) {
   history.push({ t: timestamp, y: value });
@@ -784,7 +1068,7 @@ function findCandleByScreenX(screenX) {
 
 function closeMobilePanels() {
   if (mobileOverlayNode) mobileOverlayNode.classList.add("hidden");
-  for (const node of [modesNode, timeframeNode, viewTypesNode, candleTimeframesNode, commentControlsNode, tasksTabNode, dataControlsNode, authPanelNode, levelsPanelNode]) {
+  for (const node of [modesNode, timeframeNode, viewTypesNode, candleTimeframesNode, commentControlsNode, tasksTabNode, soundsTabNode, dataControlsNode, authPanelNode, levelsPanelNode]) {
     node?.classList.remove("mobile-open");
   }
 }
@@ -798,6 +1082,7 @@ function openMobilePanel(id) {
     candleTimeframes: candleTimeframesNode,
     commentControls: commentControlsNode,
     tasksTab: tasksTabNode,
+    soundsTab: soundsTabNode,
     dataControls: dataControlsNode,
     authPanel: authPanelNode,
     levelsPanel: levelsPanelNode,
@@ -1524,12 +1809,55 @@ toggleCommentsBtn.addEventListener("click", () => {
 
 openTasksBtn?.addEventListener("click", openTasksPage);
 closeTasksBtn?.addEventListener("click", closeTasksPage);
+openSoundsBtn?.addEventListener("click", openSoundsPage);
+closeSoundsBtn?.addEventListener("click", closeSoundsPage);
 
 tasksGlobalEnabledInput?.addEventListener("change", () => {
   tasksGlobalEnabled = tasksGlobalEnabledInput.checked;
   saveProgressForCurrentUser();
   renderTasksUi();
   if (tasksGlobalEnabled) checkDueTasks(true);
+});
+
+soundsEnabledInput?.addEventListener("change", () => {
+  soundsEnabled = soundsEnabledInput.checked;
+  saveProgressForCurrentUser();
+  renderSoundsUi();
+  updateSoundPlayback();
+});
+
+soundVolumeInput?.addEventListener("input", () => {
+  soundVolume = Math.max(0, Math.min(1, Number(soundVolumeInput.value) || 0));
+  soundPlayer.volume = soundVolume;
+});
+
+soundVolumeInput?.addEventListener("change", () => {
+  soundVolume = Math.max(0, Math.min(1, Number(soundVolumeInput.value) || 0));
+  saveProgressForCurrentUser();
+  renderSoundsUi();
+});
+
+soundFileInput?.addEventListener("change", async (event) => {
+  const files = Array.from(event.target.files || []).filter((file) => file.type.startsWith("audio/"));
+  if (!files.length || !currentUser?.id) return;
+  for (const file of files) {
+    const record = {
+      id: createSoundId(),
+      userId: currentUser.id,
+      name: file.name,
+      type: file.type || "audio/mpeg",
+      size: file.size,
+      createdAt: Date.now(),
+      blob: file,
+    };
+    await writeSoundRecord(record);
+    soundRecords.push(record);
+  }
+  soundRecords.sort((a, b) => a.createdAt - b.createdAt);
+  soundFileInput.value = "";
+  saveProgressForCurrentUser();
+  renderSoundsUi();
+  updateSoundPlayback();
 });
 
 taskFormNode?.addEventListener("submit", (event) => {
@@ -1624,7 +1952,19 @@ candleCommentDeleteBtn?.addEventListener("click", () => {
 });
 
 window.addEventListener("beforeunload", () => {
-  saveProgressForCurrentUser();
+  const snapshot = saveLocalProgressForCurrentUser();
+  if (snapshot) pendingCloudSaveSnapshot = snapshot;
+  saveProgressForCurrentUser(snapshot);
+});
+
+window.addEventListener("pagehide", () => {
+  saveLocalProgressForCurrentUser();
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    saveLocalProgressForCurrentUser();
+  }
 });
 
 registerBtn.addEventListener("click", async () => {
@@ -1661,15 +2001,21 @@ loginBtn.addEventListener("click", async () => {
 
   currentUser = data.user;
   authStatus.textContent = "Вы вошли: " + currentUser.email;
-  await loadCurrentUserData();
+  await loadCurrentUserData(data.session);
 });
 
 logoutBtn.addEventListener("click", async () => {
+  await saveProgressForCurrentUser();
   await supabase.auth.signOut();
   currentUser = null;
+  lastSessionUserId = null;
   isProgressLoaded = false;
+  soundRecords = [];
+  soundsEnabled = false;
+  stopSoundLoop();
   authStatus.textContent = "Вы вышли";
   setAuthUiState();
+  renderSoundsUi();
 });
 
 resizeCanvas();
@@ -1678,6 +2024,7 @@ addHistoryPoint(Date.now());
 layoutControls();
 renderLevelsUi();
 renderTasksUi();
+renderSoundsUi();
 if (location.protocol.startsWith("http")) {
   setShareLink(`Ссылка: ${location.origin}/`);
 } else {
@@ -1685,6 +2032,7 @@ if (location.protocol.startsWith("http")) {
 }
 
 async function loadCurrentUserData(session = null) {
+  const loadToken = ++latestLoadToken;
   isProgressLoaded = false;
   try {
     let activeSession = session;
@@ -1694,15 +2042,21 @@ async function loadCurrentUserData(session = null) {
       if (sessionError) throw sessionError;
       activeSession = sessionData?.session || null;
     }
+    if (loadToken !== latestLoadToken) return;
     const user = activeSession?.user || null;
     console.log("Supabase session user result:", user);
     if (!user) {
+      lastSessionUserId = null;
       currentUser = null;
+      soundRecords = [];
+      soundsEnabled = false;
       setAuthUiState();
+      renderSoundsUi();
       updateHud();
       setMode("live");
       return;
     }
+    lastSessionUserId = user.id;
     currentUser = user;
     setAuthUiState();
     const { data, error } = await supabase
@@ -1712,20 +2066,38 @@ async function loadCurrentUserData(session = null) {
       .maybeSingle();
     console.log("loadUserData result:", { userId: user.id, data, error });
     if (error) throw error;
-    if (data?.data) {
+    if (loadToken !== latestLoadToken) return;
+    const localSnapshot = readLocalSnapshotForUser(user.id);
+    const newestSnapshot = getNewestSnapshot(data?.data, localSnapshot);
+    if (newestSnapshot) {
       isApplyingRemoteProgress = true;
-      applySnapshot(data.data);
+      applySnapshot(newestSnapshot);
       isApplyingRemoteProgress = false;
       updateHud();
     }
     isProgressLoaded = true;
+    if (newestSnapshot && newestSnapshot === localSnapshot && getSnapshotSavedAt(localSnapshot) > getSnapshotSavedAt(data?.data)) {
+      saveProgressForCurrentUser(localSnapshot);
+    }
+    await loadSoundsForCurrentUser();
     setAuthUiState();
     render();
     checkDueTasks(true);
   } catch (error) {
     console.error("loadUserData error:", error);
     isApplyingRemoteProgress = false;
-    isProgressLoaded = false;
+    if (currentUser?.id) {
+      const localSnapshot = readLocalSnapshotForUser(currentUser.id);
+      if (localSnapshot) {
+        isApplyingRemoteProgress = true;
+        applySnapshot(localSnapshot);
+        isApplyingRemoteProgress = false;
+      }
+      await loadSoundsForCurrentUser();
+      isProgressLoaded = true;
+    } else {
+      isProgressLoaded = false;
+    }
     setAuthUiState();
   }
 }
@@ -1743,6 +2115,13 @@ async function initializeAuth() {
 initializeAuth();
 supabase.auth.onAuthStateChange((event, session) => {
   console.log("Supabase auth state change:", event, session);
+  const sessionUserId = session?.user?.id || null;
+  if (sessionUserId === lastSessionUserId && currentUser?.id === sessionUserId && isProgressLoaded) {
+    return;
+  }
+  if (!sessionUserId && !lastSessionUserId && !currentUser) {
+    return;
+  }
   loadCurrentUserData(session);
 });
 setMode("live");
