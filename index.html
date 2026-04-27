@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Линия с управлением мышью</title>
+  <title>Productiv Line</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -11,6 +11,10 @@
     Этот режим доступен только на ПК. Откройте сайт на компьютере.
   </div>
   <canvas id="scene"></canvas>
+  <header class="app-brand hidden" id="appBrand">
+    <div class="app-brand-title">Productiv Line</div>
+    <div class="app-brand-subtitle">Очки, привычки и живая линия прогресса</div>
+  </header>
 
   <div class="modes" id="modes">
     <button data-mode="live" class="active">Лайв</button>
@@ -40,7 +44,7 @@
     <button id="toggleCommentsBtn" type="button">Скрыть комментарии</button>
   </div>
   <div class="tasks-tab hidden" id="tasksTab">
-    <button id="openTasksBtn" type="button">Задания</button>
+    <button id="openTasksBtn" type="button">Задания <span id="tasksTabBadge">0</span></button>
   </div>
 
   <div class="modal hidden" id="candleCommentModal" role="dialog" aria-modal="true" aria-labelledby="candleCommentTitle">
@@ -70,6 +74,20 @@
         <input id="tasksGlobalEnabled" type="checkbox" checked>
         <span></span>
       </label>
+    </div>
+    <div class="tasks-summary" id="tasksSummary">
+      <div>
+        <span>Активные</span>
+        <strong id="activeTasksCount">0</strong>
+      </div>
+      <div>
+        <span>Ожидают отчета</span>
+        <strong id="dueTasksCount">0</strong>
+      </div>
+      <div>
+        <span>Ближайшее</span>
+        <strong id="nextTaskTime">—</strong>
+      </div>
     </div>
     <form class="task-form" id="taskForm">
       <input id="taskTitleInput" type="text" maxlength="60" placeholder="Название задачи *" required>

@@ -8,4 +8,11 @@ if (!supabaseUrl || !supabaseAnonKey) {
   console.error("Supabase is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY in Netlify.");
 }
 
-export const supabase = createClient(supabaseUrl || "https://example.supabase.co", supabaseAnonKey || "missing-key");
+export const supabase = createClient(supabaseUrl || "https://example.supabase.co", supabaseAnonKey || "missing-key", {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+    storageKey: "productiv-line-auth",
+  },
+});

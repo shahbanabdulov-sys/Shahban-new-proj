@@ -2,6 +2,7 @@ import { supabase } from "./supabaseClient.js";
 
 const canvas = document.getElementById("scene");
 const ctx = canvas.getContext("2d");
+const appBrandNode = document.getElementById("appBrand");
 const valueYNode = document.getElementById("valueY");
 const deltaYNode = document.getElementById("deltaY");
 const clockNode = document.getElementById("clock");
@@ -23,6 +24,10 @@ const taskRewardInput = document.getElementById("taskRewardInput");
 const taskPenaltyInput = document.getElementById("taskPenaltyInput");
 const taskTimeInput = document.getElementById("taskTimeInput");
 const tasksListNode = document.getElementById("tasksList");
+const tasksTabBadgeNode = document.getElementById("tasksTabBadge");
+const activeTasksCountNode = document.getElementById("activeTasksCount");
+const dueTasksCountNode = document.getElementById("dueTasksCount");
+const nextTaskTimeNode = document.getElementById("nextTaskTime");
 const taskReportModalNode = document.getElementById("taskReportModal");
 const taskReportTimeNode = document.getElementById("taskReportTime");
 const taskReportNameNode = document.getElementById("taskReportName");
@@ -63,6 +68,7 @@ const authStatus = document.getElementById("authStatus");
 const mobileToolbarNode = document.getElementById("mobileToolbar");
 const mobileOverlayNode = document.getElementById("mobileOverlay");
 const appPanelsForAuth = [
+  appBrandNode,
   modesNode,
   timeframeNode,
   viewTypesNode,
@@ -326,8 +332,7 @@ async function saveProgressForCurrentUser(snapshot = null) {
     return null;
   }
   try {
-    const auth = await supabase.auth.getUser();
-    const userId = auth?.data?.user?.id || currentUser.id;
+    const userId = currentUser.id;
     if (!userId) {
       console.log("saveProgressForCurrentUser: user id не найден");
       return null;
@@ -450,6 +455,15 @@ function renderLevelsUi() {
 
 function renderTasksUi() {
   if (tasksGlobalEnabledInput) tasksGlobalEnabledInput.checked = tasksGlobalEnabled;
+  const activeCount = tasks.filter((task) => task.enabled).length;
+  const dueCount = getDueTasks(Date.now()).length;
+  const nextTask = getNextPendingTask();
+  if (tasksTabBadgeNode) tasksTabBadgeNode.textContent = String(dueCount || activeCount);
+  if (activeTasksCountNode) activeTasksCountNode.textContent = String(activeCount);
+  if (dueTasksCountNode) dueTasksCountNode.textContent = String(dueCount);
+  if (nextTaskTimeNode) {
+    nextTaskTimeNode.textContent = nextTask ? `${nextTask.time} · ${nextTask.title}` : "—";
+  }
   if (!tasksListNode) return;
   const list = tasks.slice().sort((a, b) => a.time.localeCompare(b.time));
   tasksListNode.innerHTML = "";
@@ -525,6 +539,17 @@ function renderTasksUi() {
 
     tasksListNode.appendChild(item);
   }
+}
+
+function getNextPendingTask(now = Date.now()) {
+  if (!tasksGlobalEnabled) return null;
+  return tasks
+    .filter((task) => task.enabled && !task.reports?.[getLocalDateKey(now)])
+    .sort((a, b) => {
+      const aTime = getScheduledTimestampForDate(a.time, now);
+      const bTime = getScheduledTimestampForDate(b.time, now);
+      return aTime - bTime;
+    })[0] || null;
 }
 
 function openTasksPage() {
@@ -1659,15 +1684,18 @@ if (location.protocol.startsWith("http")) {
   setShareLink("Ссылка: опубликуйте сайт на Netlify");
 }
 
-async function loadCurrentUserData() {
+async function loadCurrentUserData(session = null) {
   isProgressLoaded = false;
   try {
-    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-    console.log("Supabase getSession result:", sessionData, sessionError);
-    if (sessionError) throw sessionError;
-    const auth = await supabase.auth.getUser();
-    const user = auth?.data?.user;
-    console.log("Supabase getUser result:", user);
+    let activeSession = session;
+    if (!activeSession) {
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      console.log("Supabase getSession result:", sessionData, sessionError);
+      if (sessionError) throw sessionError;
+      activeSession = sessionData?.session || null;
+    }
+    const user = activeSession?.user || null;
+    console.log("Supabase session user result:", user);
     if (!user) {
       currentUser = null;
       setAuthUiState();
@@ -1676,6 +1704,7 @@ async function loadCurrentUserData() {
       return;
     }
     currentUser = user;
+    setAuthUiState();
     const { data, error } = await supabase
       .from("user_data")
       .select("data")
@@ -1697,7 +1726,6 @@ async function loadCurrentUserData() {
     console.error("loadUserData error:", error);
     isApplyingRemoteProgress = false;
     isProgressLoaded = false;
-    currentUser = null;
     setAuthUiState();
   }
 }
@@ -1706,15 +1734,16 @@ async function initializeAuth() {
     const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
     console.log("Supabase initializeAuth getSession:", sessionData, sessionError);
     if (sessionError) throw sessionError;
+    await loadCurrentUserData(sessionData?.session || null);
   } catch (error) {
     console.error("Supabase initializeAuth error:", error);
+    await loadCurrentUserData();
   }
-  await loadCurrentUserData();
 }
 initializeAuth();
 supabase.auth.onAuthStateChange((event, session) => {
   console.log("Supabase auth state change:", event, session);
-  loadCurrentUserData();
+  loadCurrentUserData(session);
 });
 setMode("live");
 requestAnimationFrame(frame);
