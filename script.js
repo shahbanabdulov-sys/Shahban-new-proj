@@ -1,5 +1,3 @@
-import { supabase } from "./supabaseClient.js";
-
 const canvas = document.getElementById("scene");
 const ctx = canvas.getContext("2d");
 const appBrandNode = document.getElementById("appBrand");
@@ -173,17 +171,44 @@ let lastCandleHitboxes = [];
 let commentEditingCandleTime = null;
 
 const AUTOSAVE_MS = 1500;
+const FAST_SAVE_MS = 250;
 const LOCAL_PROGRESS_PREFIX = "productiv-line-progress:";
+const LOCAL_FAST_PROGRESS_PREFIX = "productiv-line-fast:";
 const SOUND_DB_NAME = "productiv-line-sounds";
 const SOUND_STORE_NAME = "sounds";
+const SUPABASE_AUTH_STORAGE_KEY = "productiv-line-auth";
+const FAST_HISTORY_LIMIT = 5000;
 
 let saveInFlight = false;
 let pendingCloudSaveSnapshot = null;
 let latestLoadToken = 0;
 let lastSessionUserId = null;
+let lastFastSaveAt = 0;
+let lastFastSavedValue = currentValue;
+let soundsLoadedForUserId = null;
+let isLoadingSounds = false;
 
 const soundPlayer = new Audio();
 soundPlayer.preload = "auto";
+
+let supabase = null;
+let supabaseClientPromise = null;
+
+function getSupabaseClient() {
+  if (supabase) return Promise.resolve(supabase);
+  if (!supabaseClientPromise) {
+    supabaseClientPromise = import("./supabaseClient.js")
+      .then((module) => {
+        supabase = module.supabase;
+        return supabase;
+      })
+      .catch((error) => {
+        supabaseClientPromise = null;
+        throw error;
+      });
+  }
+  return supabaseClientPromise;
+}
 
 function toSafeNumber(value, fallback = 0) {
   return Number.isFinite(value) ? value : fallback;
@@ -195,6 +220,10 @@ function normalizeEmail(value) {
 
 function getLocalProgressKey(userId) {
   return `${LOCAL_PROGRESS_PREFIX}${userId}`;
+}
+
+function getLocalFastProgressKey(userId) {
+  return `${LOCAL_FAST_PROGRESS_PREFIX}${userId}`;
 }
 
 function getSnapshotSavedAt(snapshot) {
@@ -224,17 +253,66 @@ function writeLocalSnapshotForUser(userId, snapshot) {
   }
 }
 
+function readLocalFastSnapshotForUser(userId) {
+  try {
+    const raw = localStorage.getItem(getLocalFastProgressKey(userId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch (error) {
+    console.warn("readLocalFastSnapshotForUser error:", error);
+    return null;
+  }
+}
+
+function writeLocalFastSnapshotForUser(userId, snapshot) {
+  try {
+    localStorage.setItem(getLocalFastProgressKey(userId), JSON.stringify(toFastSnapshot(snapshot)));
+  } catch (error) {
+    console.warn("writeLocalFastSnapshotForUser error:", error);
+  }
+}
+
 function getNewestSnapshot(...snapshots) {
   return snapshots
     .filter((snapshot) => snapshot && typeof snapshot === "object")
     .sort((a, b) => getSnapshotSavedAt(b) - getSnapshotSavedAt(a))[0] || null;
 }
 
+function readCachedAuthUser() {
+  try {
+    const raw = localStorage.getItem(SUPABASE_AUTH_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const session = parsed?.currentSession || parsed?.session || parsed;
+    const user = session?.user || parsed?.user || null;
+    if (!user?.id) return null;
+    return {
+      id: user.id,
+      email: user.email || "",
+      app_metadata: user.app_metadata || {},
+      user_metadata: user.user_metadata || {},
+    };
+  } catch (error) {
+    console.warn("readCachedAuthUser error:", error);
+    return null;
+  }
+}
+
 function saveLocalProgressForCurrentUser(snapshot = null) {
   const userId = currentUser?.id;
   if (!userId || !isProgressLoaded || isApplyingRemoteProgress) return null;
   const nextSnapshot = snapshot ?? getSnapshot();
+  writeLocalFastSnapshotForUser(userId, nextSnapshot);
   writeLocalSnapshotForUser(userId, nextSnapshot);
+  return nextSnapshot;
+}
+
+function saveFastProgressForCurrentUser(snapshot = null) {
+  const userId = currentUser?.id;
+  if (!userId || !isProgressLoaded || isApplyingRemoteProgress) return null;
+  const nextSnapshot = snapshot ? toFastSnapshot(snapshot) : getFastSnapshot();
+  writeLocalFastSnapshotForUser(userId, nextSnapshot);
   return nextSnapshot;
 }
 
@@ -302,7 +380,56 @@ function getSnapshot() {
   };
 }
 
-function applySnapshot(parsed) {
+function toFastSnapshot(snapshot = null) {
+  const source = snapshot || {};
+  const sourceHistory = Array.isArray(source.history) ? source.history : history;
+  return {
+    version: source.version || 1,
+    savedAt: source.savedAt || Date.now(),
+    currentValue: toSafeNumber(source.currentValue, currentValue),
+    currentX: toSafeNumber(source.currentX, currentX),
+    selectedRange: source.selectedRange || selectedRange,
+    selectedViewType: source.selectedViewType || selectedViewType,
+    selectedCandleRange: source.selectedCandleRange || selectedCandleRange,
+    candleOffset: toSafeNumber(source.candleOffset, candleOffset),
+    candleZoom: toSafeNumber(source.candleZoom, candleZoom),
+    commentsVisible: source.commentsVisible !== false,
+    candleComments: Array.isArray(source.candleComments) ? source.candleComments : candleComments,
+    totalPoints: Math.max(0, toSafeNumber(source.totalPoints, totalPoints)),
+    levels: Array.isArray(source.levels) ? source.levels : levels,
+    tasksGlobalEnabled: source.tasksGlobalEnabled !== false,
+    tasks: Array.isArray(source.tasks) ? source.tasks : tasks,
+    soundsEnabled: source.soundsEnabled === true,
+    soundVolume: Math.max(0, Math.min(1, toSafeNumber(Number(source.soundVolume), soundVolume))),
+    history: sourceHistory.slice(-FAST_HISTORY_LIMIT),
+  };
+}
+
+function getFastSnapshot() {
+  return toFastSnapshot({
+    version: 1,
+    savedAt: Date.now(),
+    currentValue,
+    currentX,
+    selectedRange,
+    selectedViewType,
+    selectedCandleRange,
+    candleOffset,
+    candleZoom,
+    commentsVisible,
+    candleComments,
+    totalPoints,
+    levels,
+    tasksGlobalEnabled,
+    tasks,
+    soundsEnabled,
+    soundVolume,
+    history,
+  });
+}
+
+function applySnapshot(parsed, options = {}) {
+  const shouldUpdateSounds = options.updateSounds === true;
   const rawHistory = Array.isArray(parsed.history) ? parsed.history : [];
   const nextHistory = rawHistory
     .map((item) => ({
@@ -312,17 +439,18 @@ function applySnapshot(parsed) {
     .filter((item) => Number.isFinite(item.t) && Number.isFinite(item.y))
     .sort((a, b) => a.t - b.t);
 
-  if (nextHistory.length === 0) {
-    return false;
+  if (nextHistory.length > 0) {
+    history.length = 0;
+    for (const item of nextHistory) history.push(item);
+    lastPointAt = history[history.length - 1].t;
+  } else if (history.length === 0) {
+    history.push({ t: Date.now(), y: toSafeNumber(parsed.currentValue, currentValue) });
+    lastPointAt = history[history.length - 1].t;
   }
-
-  history.length = 0;
-  for (const item of nextHistory) history.push(item);
 
   currentValue = toSafeNumber(parsed.currentValue, history[history.length - 1].y);
   previousValue = currentValue;
   currentX = toSafeNumber(parsed.currentX, currentX);
-  lastPointAt = history[history.length - 1].t;
   totalPoints = Math.max(0, toSafeNumber(parsed.totalPoints, 0));
   if (Array.isArray(parsed.levels)) {
     const cleaned = parsed.levels
@@ -383,7 +511,7 @@ function applySnapshot(parsed) {
   renderLevelsUi();
   renderTasksUi();
   renderSoundsUi();
-  updateSoundPlayback();
+  if (shouldUpdateSounds) updateSoundPlayback();
   return true;
 }
 
@@ -416,18 +544,20 @@ async function saveProgressForCurrentUser(snapshot = null) {
     console.log("saveProgressForCurrentUser: нет залогиненного пользователя");
     return null;
   }
-  const snapshotToSave = saveLocalProgressForCurrentUser(snapshot);
-  if (!snapshotToSave) return null;
-  pendingCloudSaveSnapshot = snapshotToSave;
-  if (saveInFlight) return null;
-
-  saveInFlight = true;
+  let ownsSaveLock = false;
   try {
     const userId = currentUser.id;
     if (!userId) {
       console.log("saveProgressForCurrentUser: user id не найден");
       return null;
     }
+    const snapshotToSave = snapshot ? toFastSnapshot(snapshot) : getFastSnapshot();
+    writeLocalFastSnapshotForUser(userId, snapshotToSave);
+    pendingCloudSaveSnapshot = snapshotToSave;
+    if (saveInFlight) return null;
+
+    saveInFlight = true;
+    ownsSaveLock = true;
     let lastData = null;
     while (pendingCloudSaveSnapshot) {
       const queuedSnapshot = pendingCloudSaveSnapshot;
@@ -437,7 +567,8 @@ async function saveProgressForCurrentUser(snapshot = null) {
         data: queuedSnapshot,
         updated_at: new Date().toISOString()
       };
-      const { data, error } = await supabase.from("user_data").upsert(payload, { onConflict: "user_id" });
+      const client = await getSupabaseClient();
+      const { data, error } = await client.from("user_data").upsert(payload, { onConflict: "user_id" });
       console.log("saveUserData result:", { userId, savedAt: queuedSnapshot.savedAt, data, error });
       if (error) throw error;
       lastData = data;
@@ -447,8 +578,8 @@ async function saveProgressForCurrentUser(snapshot = null) {
     console.error("saveUserData error:", error);
     return null;
   } finally {
-    saveInFlight = false;
-    if (pendingCloudSaveSnapshot && currentUser?.id) {
+    if (ownsSaveLock) saveInFlight = false;
+    if (ownsSaveLock && pendingCloudSaveSnapshot && currentUser?.id) {
       setTimeout(() => saveProgressForCurrentUser(pendingCloudSaveSnapshot), 0);
     }
   }
@@ -666,6 +797,7 @@ function closeTasksPage() {
 function openSoundsPage() {
   renderSoundsUi();
   soundsPageNode?.classList.remove("hidden");
+  loadSoundsForCurrentUser();
 }
 
 function closeSoundsPage() {
@@ -743,10 +875,15 @@ async function deleteSoundRecord(id) {
 async function loadSoundsForCurrentUser() {
   if (!currentUser?.id) {
     soundRecords = [];
+    soundsLoadedForUserId = null;
     renderSoundsUi();
     return;
   }
+  if (soundsLoadedForUserId === currentUser.id || isLoadingSounds) return;
+  isLoadingSounds = true;
   soundRecords = await readSoundRecordsForUser(currentUser.id);
+  soundsLoadedForUserId = currentUser.id;
+  isLoadingSounds = false;
   renderSoundsUi();
   updateSoundPlayback();
 }
@@ -780,7 +917,7 @@ function renderSoundsUi() {
     meta.className = "sound-item-meta";
     const name = document.createElement("div");
     name.className = "sound-item-name";
-    name.textContent = record.name || "audio";
+    name.textContent = record.name || "Аудио";
     const sub = document.createElement("div");
     sub.className = "sound-item-sub";
     sub.textContent = formatBytes(record.size);
@@ -801,6 +938,74 @@ function renderSoundsUi() {
     soundsListNode.appendChild(item);
   }
 }
+
+function localizeSoundsStaticUi() {
+  const openSoundsText = openSoundsBtn?.firstChild;
+  if (openSoundsText) openSoundsText.textContent = "Звуки ";
+  const title = document.querySelector(".sounds-page-title");
+  if (title) title.textContent = "Звуки";
+  const subtitle = document.querySelector(".sounds-page-subtitle");
+  if (subtitle) subtitle.textContent = "Аудиозаписи для фонового воспроизведения";
+  if (closeSoundsBtn) closeSoundsBtn.textContent = "Закрыть";
+  const globalLabel = document.querySelector(".sounds-global-row > span");
+  if (globalLabel) globalLabel.textContent = "Проигрывать звуки";
+  const volumeLabel = document.querySelector(".sounds-controls label:first-child > span");
+  if (volumeLabel) volumeLabel.textContent = "Громкость";
+  const uploadLabel = document.querySelector(".sound-upload > span");
+  if (uploadLabel) uploadLabel.textContent = "Добавить аудио";
+}
+
+renderSoundsUi = function renderSoundsUiRu() {
+  localizeSoundsStaticUi();
+  if (soundsEnabledInput) soundsEnabledInput.checked = soundsEnabled;
+  if (soundVolumeInput) soundVolumeInput.value = String(soundVolume);
+  if (soundsTabBadgeNode) soundsTabBadgeNode.textContent = String(soundRecords.length);
+  if (soundsStatusNode) {
+    if (!soundRecords.length) {
+      soundsStatusNode.textContent = "Записей пока нет.";
+    } else if (soundsEnabled) {
+      soundsStatusNode.textContent = "Звуки включены. На телефоне иногда нужно нажать переключатель после возврата на сайт.";
+    } else {
+      soundsStatusNode.textContent = "Звуки выключены.";
+    }
+  }
+  if (!soundsListNode) return;
+  soundsListNode.innerHTML = "";
+  if (!soundRecords.length) {
+    const empty = document.createElement("div");
+    empty.className = "sounds-empty";
+    empty.textContent = "Добавьте аудиофайлы, и они останутся после обновления страницы.";
+    soundsListNode.appendChild(empty);
+    return;
+  }
+  for (const record of soundRecords) {
+    const item = document.createElement("div");
+    item.className = "sound-item";
+    const meta = document.createElement("div");
+    meta.className = "sound-item-meta";
+    const name = document.createElement("div");
+    name.className = "sound-item-name";
+    name.textContent = record.name || "audio";
+    const sub = document.createElement("div");
+    sub.className = "sound-item-sub";
+    sub.textContent = formatBytes(record.size);
+    meta.appendChild(name);
+    meta.appendChild(sub);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "Удалить";
+    remove.addEventListener("click", async () => {
+      await deleteSoundRecord(record.id);
+      soundRecords = soundRecords.filter((itemRecord) => itemRecord.id !== record.id);
+      soundCurrentIndex = 0;
+      renderSoundsUi();
+      updateSoundPlayback();
+    });
+    item.appendChild(meta);
+    item.appendChild(remove);
+    soundsListNode.appendChild(item);
+  }
+};
 
 function stopSoundLoop() {
   soundPlayer.pause();
@@ -1565,6 +1770,11 @@ function frame(now) {
   }
   checkDueTasks();
   addHistoryPoint(Date.now());
+  if (currentUser && isProgressLoaded && now - lastFastSaveAt >= FAST_SAVE_MS && currentValue !== lastFastSavedValue) {
+    saveFastProgressForCurrentUser();
+    lastFastSaveAt = now;
+    lastFastSavedValue = currentValue;
+  }
   if (currentUser && now - lastAutosaveAt >= AUTOSAVE_MS) {
     saveProgressForCurrentUser();
     lastAutosaveAt = now;
@@ -1585,7 +1795,9 @@ canvas.addEventListener("mousedown", (event) => {
 });
 
 window.addEventListener("mouseup", () => {
+  const shouldSave = isMouseDown && selectedMode === "live" && pointerDidDrag;
   isMouseDown = false;
+  if (shouldSave) saveProgressForCurrentUser();
 });
 
 window.addEventListener("mousemove", (event) => {
@@ -1613,6 +1825,9 @@ canvas.addEventListener("touchstart", (event) => {
   if (selectedMode === "live") {
     if (touches.length === 1) {
       isMouseDown = true;
+      pointerDidDrag = false;
+      pointerDownX = touches[0].clientX;
+      pointerDownY = touches[0].clientY;
       lastMouseY = touches[0].clientY;
       mouseChartX = touches[0].clientX;
       mouseChartY = touches[0].clientY;
@@ -1641,6 +1856,9 @@ canvas.addEventListener("touchmove", (event) => {
   if (selectedMode === "live") {
     if (touches.length === 1 && isMouseDown) {
       const touch = touches[0];
+      if (Math.abs(touch.clientX - pointerDownX) > 6 || Math.abs(touch.clientY - pointerDownY) > 6) {
+        pointerDidDrag = true;
+      }
       const deltaY = touch.clientY - lastMouseY;
       pendingVerticalDelta += deltaY;
       lastMouseY = touch.clientY;
@@ -1682,7 +1900,9 @@ canvas.addEventListener("touchmove", (event) => {
 canvas.addEventListener("touchend", (event) => {
   if (selectedMode === "live") {
     if (event.touches.length === 0) {
+      const shouldSave = isMouseDown && pointerDidDrag;
       isMouseDown = false;
+      if (shouldSave) saveProgressForCurrentUser();
     } else {
       lastMouseY = event.touches[0].clientY;
     }
@@ -1823,7 +2043,11 @@ soundsEnabledInput?.addEventListener("change", () => {
   soundsEnabled = soundsEnabledInput.checked;
   saveProgressForCurrentUser();
   renderSoundsUi();
-  updateSoundPlayback();
+  if (soundsLoadedForUserId !== currentUser?.id) {
+    loadSoundsForCurrentUser().then(updateSoundPlayback);
+  } else {
+    updateSoundPlayback();
+  }
 });
 
 soundVolumeInput?.addEventListener("input", () => {
@@ -1952,18 +2176,18 @@ candleCommentDeleteBtn?.addEventListener("click", () => {
 });
 
 window.addEventListener("beforeunload", () => {
-  const snapshot = saveLocalProgressForCurrentUser();
+  const snapshot = saveFastProgressForCurrentUser();
   if (snapshot) pendingCloudSaveSnapshot = snapshot;
   saveProgressForCurrentUser(snapshot);
 });
 
 window.addEventListener("pagehide", () => {
-  saveLocalProgressForCurrentUser();
+  saveFastProgressForCurrentUser();
 });
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
-    saveLocalProgressForCurrentUser();
+    saveFastProgressForCurrentUser();
   }
 });
 
@@ -1971,7 +2195,8 @@ registerBtn.addEventListener("click", async () => {
   const email = authEmail.value;
   const password = authPassword.value;
 
-  const { error } = await supabase.auth.signUp({
+  const client = await getSupabaseClient();
+  const { error } = await client.auth.signUp({
     email,
     password
   });
@@ -1989,7 +2214,8 @@ loginBtn.addEventListener("click", async () => {
   const password = authPassword.value;
   isProgressLoaded = false;
 
-  const { data, error } = await supabase.auth.signInWithPassword({
+  const client = await getSupabaseClient();
+  const { data, error } = await client.auth.signInWithPassword({
     email,
     password
   });
@@ -2006,11 +2232,13 @@ loginBtn.addEventListener("click", async () => {
 
 logoutBtn.addEventListener("click", async () => {
   await saveProgressForCurrentUser();
-  await supabase.auth.signOut();
+  const client = await getSupabaseClient();
+  await client.auth.signOut();
   currentUser = null;
   lastSessionUserId = null;
   isProgressLoaded = false;
   soundRecords = [];
+  soundsLoadedForUserId = null;
   soundsEnabled = false;
   stopSoundLoop();
   authStatus.textContent = "Вы вышли";
@@ -2033,11 +2261,13 @@ if (location.protocol.startsWith("http")) {
 
 async function loadCurrentUserData(session = null) {
   const loadToken = ++latestLoadToken;
-  isProgressLoaded = false;
+  const hadReadyUser = Boolean(currentUser?.id && isProgressLoaded);
+  if (!hadReadyUser) isProgressLoaded = false;
   try {
     let activeSession = session;
+    const client = await getSupabaseClient();
     if (!activeSession) {
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      const { data: sessionData, error: sessionError } = await client.auth.getSession();
       console.log("Supabase getSession result:", sessionData, sessionError);
       if (sessionError) throw sessionError;
       activeSession = sessionData?.session || null;
@@ -2049,6 +2279,7 @@ async function loadCurrentUserData(session = null) {
       lastSessionUserId = null;
       currentUser = null;
       soundRecords = [];
+      soundsLoadedForUserId = null;
       soundsEnabled = false;
       setAuthUiState();
       renderSoundsUi();
@@ -2059,7 +2290,7 @@ async function loadCurrentUserData(session = null) {
     lastSessionUserId = user.id;
     currentUser = user;
     setAuthUiState();
-    const { data, error } = await supabase
+    const { data, error } = await client
       .from("user_data")
       .select("data")
       .eq("user_id", user.id)
@@ -2068,18 +2299,22 @@ async function loadCurrentUserData(session = null) {
     if (error) throw error;
     if (loadToken !== latestLoadToken) return;
     const localSnapshot = readLocalSnapshotForUser(user.id);
-    const newestSnapshot = getNewestSnapshot(data?.data, localSnapshot);
+    const localFastSnapshot = readLocalFastSnapshotForUser(user.id);
+    const localNewestSnapshot = getNewestSnapshot(localFastSnapshot, localSnapshot);
+    const newestSnapshot = hadReadyUser && localNewestSnapshot
+      ? localNewestSnapshot
+      : getNewestSnapshot(data?.data, localSnapshot, localFastSnapshot);
     if (newestSnapshot) {
       isApplyingRemoteProgress = true;
       applySnapshot(newestSnapshot);
       isApplyingRemoteProgress = false;
+      writeLocalFastSnapshotForUser(user.id, newestSnapshot);
       updateHud();
     }
     isProgressLoaded = true;
-    if (newestSnapshot && newestSnapshot === localSnapshot && getSnapshotSavedAt(localSnapshot) > getSnapshotSavedAt(data?.data)) {
-      saveProgressForCurrentUser(localSnapshot);
+    if (newestSnapshot && newestSnapshot !== data?.data && getSnapshotSavedAt(newestSnapshot) > getSnapshotSavedAt(data?.data)) {
+      saveProgressForCurrentUser(newestSnapshot);
     }
-    await loadSoundsForCurrentUser();
     setAuthUiState();
     render();
     checkDueTasks(true);
@@ -2087,13 +2322,13 @@ async function loadCurrentUserData(session = null) {
     console.error("loadUserData error:", error);
     isApplyingRemoteProgress = false;
     if (currentUser?.id) {
-      const localSnapshot = readLocalSnapshotForUser(currentUser.id);
+      const localSnapshot = getNewestSnapshot(readLocalSnapshotForUser(currentUser.id), readLocalFastSnapshotForUser(currentUser.id));
       if (localSnapshot) {
         isApplyingRemoteProgress = true;
         applySnapshot(localSnapshot);
         isApplyingRemoteProgress = false;
+        writeLocalFastSnapshotForUser(currentUser.id, localSnapshot);
       }
-      await loadSoundsForCurrentUser();
       isProgressLoaded = true;
     } else {
       isProgressLoaded = false;
@@ -2101,9 +2336,41 @@ async function loadCurrentUserData(session = null) {
     setAuthUiState();
   }
 }
+
+function bootstrapCachedAccount() {
+  const cachedUser = readCachedAuthUser();
+  if (!cachedUser?.id) {
+    setAuthUiState();
+    return false;
+  }
+
+  currentUser = cachedUser;
+  lastSessionUserId = cachedUser.id;
+  isProgressLoaded = true;
+
+  const snapshot = getNewestSnapshot(
+    readLocalFastSnapshotForUser(cachedUser.id),
+    readLocalSnapshotForUser(cachedUser.id)
+  );
+
+  if (snapshot) {
+    isApplyingRemoteProgress = true;
+    applySnapshot(snapshot);
+    isApplyingRemoteProgress = false;
+    saveFastProgressForCurrentUser(snapshot);
+  }
+
+  updateHud();
+  setAuthUiState();
+  render();
+  checkDueTasks(true);
+  return true;
+}
+
 async function initializeAuth() {
   try {
-    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    const client = await getSupabaseClient();
+    const { data: sessionData, error: sessionError } = await client.auth.getSession();
     console.log("Supabase initializeAuth getSession:", sessionData, sessionError);
     if (sessionError) throw sessionError;
     await loadCurrentUserData(sessionData?.session || null);
@@ -2112,17 +2379,24 @@ async function initializeAuth() {
     await loadCurrentUserData();
   }
 }
+bootstrapCachedAccount();
 initializeAuth();
-supabase.auth.onAuthStateChange((event, session) => {
-  console.log("Supabase auth state change:", event, session);
-  const sessionUserId = session?.user?.id || null;
-  if (sessionUserId === lastSessionUserId && currentUser?.id === sessionUserId && isProgressLoaded) {
-    return;
-  }
-  if (!sessionUserId && !lastSessionUserId && !currentUser) {
-    return;
-  }
-  loadCurrentUserData(session);
-});
+getSupabaseClient()
+  .then((client) => {
+    client.auth.onAuthStateChange((event, session) => {
+      console.log("Supabase auth state change:", event, session);
+      const sessionUserId = session?.user?.id || null;
+      if (sessionUserId === lastSessionUserId && currentUser?.id === sessionUserId && isProgressLoaded) {
+        return;
+      }
+      if (!sessionUserId && !lastSessionUserId && !currentUser) {
+        return;
+      }
+      loadCurrentUserData(session);
+    });
+  })
+  .catch((error) => {
+    console.error("Supabase auth listener error:", error);
+  });
 setMode("live");
 requestAnimationFrame(frame);
