@@ -194,6 +194,15 @@ soundPlayer.preload = "auto";
 let supabase = null;
 let supabaseClientPromise = null;
 
+function withTimeout(promise, ms, label = "operation") {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(`${label} timeout`)), ms);
+    }),
+  ]);
+}
+
 function getSupabaseClient() {
   if (supabase) return Promise.resolve(supabase);
   if (!supabaseClientPromise) {
@@ -208,6 +217,12 @@ function getSupabaseClient() {
       });
   }
   return supabaseClientPromise;
+}
+
+function setAuthBusy(isBusy) {
+  if (loginBtn) loginBtn.disabled = isBusy;
+  if (registerBtn) registerBtn.disabled = isBusy;
+  if (logoutBtn) logoutBtn.disabled = isBusy;
 }
 
 function toSafeNumber(value, fallback = 0) {
@@ -2061,27 +2076,35 @@ soundVolumeInput?.addEventListener("change", () => {
   renderSoundsUi();
 });
 
-soundFileInput?.addEventListener("change", async (event) => {
+soundFileInput?.addEventListener("change", (event) => {
   const files = Array.from(event.target.files || []).filter((file) => file.type.startsWith("audio/"));
   if (!files.length || !currentUser?.id) return;
-  for (const file of files) {
-    const record = {
-      id: createSoundId(),
-      userId: currentUser.id,
-      name: file.name,
-      type: file.type || "audio/mpeg",
-      size: file.size,
-      createdAt: Date.now(),
-      blob: file,
-    };
-    await writeSoundRecord(record);
-    soundRecords.push(record);
-  }
+  const records = files.map((file) => ({
+    id: createSoundId(),
+    userId: currentUser.id,
+    name: file.name,
+    type: file.type || "audio/mpeg",
+    size: file.size,
+    createdAt: Date.now(),
+    blob: file,
+  }));
+
+  soundsEnabled = true;
+  soundRecords.push(...records);
   soundRecords.sort((a, b) => a.createdAt - b.createdAt);
   soundFileInput.value = "";
   saveProgressForCurrentUser();
   renderSoundsUi();
   updateSoundPlayback();
+
+  Promise.all(records.map(writeSoundRecord)).catch((error) => {
+    console.warn("writeSoundRecord error:", error);
+    const failedIds = new Set(records.map((record) => record.id));
+    soundRecords = soundRecords.filter((record) => !failedIds.has(record.id));
+    soundCurrentIndex = 0;
+    renderSoundsUi();
+    updateSoundPlayback();
+  });
 });
 
 taskFormNode?.addEventListener("submit", (event) => {
@@ -2245,6 +2268,113 @@ logoutBtn.addEventListener("click", async () => {
   setAuthUiState();
   renderSoundsUi();
 });
+
+async function handleRegisterClick(event) {
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  const email = authEmail.value;
+  const password = authPassword.value;
+  authStatus.textContent = "Регистрация...";
+  setAuthBusy(true);
+  try {
+    const client = await withTimeout(getSupabaseClient(), 10000, "supabase");
+    const { error } = await withTimeout(client.auth.signUp({ email, password }), 15000, "sign up");
+    if (error) {
+      authStatus.textContent = "Ошибка регистрации: " + error.message;
+      return;
+    }
+    authStatus.textContent = "Регистрация успешна. Проверьте email.";
+  } catch (error) {
+    console.error("register error:", error);
+    if (!supabase) supabaseClientPromise = null;
+    authStatus.textContent = "Не удалось зарегистрироваться. Проверьте интернет и настройки Supabase.";
+  } finally {
+    setAuthBusy(false);
+  }
+}
+
+async function handleLoginClick(event) {
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  const email = authEmail.value;
+  const password = authPassword.value;
+  authStatus.textContent = "Вход...";
+  setAuthBusy(true);
+  try {
+    const client = await withTimeout(getSupabaseClient(), 10000, "supabase");
+    const { data, error } = await withTimeout(client.auth.signInWithPassword({ email, password }), 15000, "sign in");
+    if (error) {
+      authStatus.textContent = "Ошибка входа: " + error.message;
+      isProgressLoaded = Boolean(currentUser?.id);
+      setAuthUiState();
+      return;
+    }
+
+    currentUser = data.user;
+    lastSessionUserId = data.user?.id || null;
+    isProgressLoaded = true;
+    authStatus.textContent = "Вы вошли: " + (currentUser.email || currentUser.id);
+
+    const cachedSnapshot = getNewestSnapshot(
+      readLocalFastSnapshotForUser(currentUser.id),
+      readLocalSnapshotForUser(currentUser.id)
+    );
+    if (cachedSnapshot) {
+      isApplyingRemoteProgress = true;
+      applySnapshot(cachedSnapshot);
+      isApplyingRemoteProgress = false;
+    }
+    setAuthUiState();
+    render();
+    checkDueTasks(true);
+    loadCurrentUserData(data.session);
+  } catch (error) {
+    console.error("login error:", error);
+    if (!supabase) supabaseClientPromise = null;
+    authStatus.textContent = "Не удалось войти. Проверьте интернет и настройки Supabase.";
+    isProgressLoaded = Boolean(currentUser?.id);
+    setAuthUiState();
+  } finally {
+    setAuthBusy(false);
+  }
+}
+
+async function handleLogoutClick(event) {
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  const snapshot = saveFastProgressForCurrentUser();
+  if (snapshot) pendingCloudSaveSnapshot = snapshot;
+  const previousUserId = currentUser?.id || null;
+
+  currentUser = null;
+  lastSessionUserId = null;
+  isProgressLoaded = false;
+  soundRecords = [];
+  soundsLoadedForUserId = null;
+  soundsEnabled = false;
+  stopSoundLoop();
+  try {
+    localStorage.removeItem(SUPABASE_AUTH_STORAGE_KEY);
+  } catch (error) {
+    console.warn("clear auth storage error:", error);
+  }
+  authStatus.textContent = "Вы вышли";
+  setAuthUiState();
+  renderSoundsUi();
+
+  try {
+    const client = await withTimeout(getSupabaseClient(), 10000, "supabase");
+    await withTimeout(client.auth.signOut(), 10000, "sign out");
+  } catch (error) {
+    console.warn("remote sign out failed:", error);
+    if (!supabase) supabaseClientPromise = null;
+  }
+  if (previousUserId) pendingCloudSaveSnapshot = null;
+}
+
+registerBtn.addEventListener("click", handleRegisterClick, true);
+loginBtn.addEventListener("click", handleLoginClick, true);
+logoutBtn.addEventListener("click", handleLogoutClick, true);
 
 resizeCanvas();
 initLiveLine();
