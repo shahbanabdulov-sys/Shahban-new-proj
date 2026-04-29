@@ -149,7 +149,7 @@ let soundVolume = 0.65;
 let soundRecords = [];
 let soundDbPromise = null;
 let soundCurrentUrl = null;
-let soundCurrentIndex = 0;
+let soundCurrentIndex = -1;
 let isSoundLoopStarting = false;
 let levels = [
   { name: "Новичок", points: 0 },
@@ -944,7 +944,7 @@ function renderSoundsUi() {
     remove.addEventListener("click", async () => {
       await deleteSoundRecord(record.id);
       soundRecords = soundRecords.filter((itemRecord) => itemRecord.id !== record.id);
-      soundCurrentIndex = 0;
+      soundCurrentIndex = -1;
       renderSoundsUi();
       updateSoundPlayback();
     });
@@ -1012,7 +1012,7 @@ renderSoundsUi = function renderSoundsUiRu() {
     remove.addEventListener("click", async () => {
       await deleteSoundRecord(record.id);
       soundRecords = soundRecords.filter((itemRecord) => itemRecord.id !== record.id);
-      soundCurrentIndex = 0;
+      soundCurrentIndex = -1;
       renderSoundsUi();
       updateSoundPlayback();
     });
@@ -1031,13 +1031,30 @@ function stopSoundLoop() {
   isSoundLoopStarting = false;
 }
 
+function isSiteVisible() {
+  return document.visibilityState !== "hidden";
+}
+
+function getRandomSoundRecord() {
+  if (!soundRecords.length) return null;
+  let nextIndex = Math.floor(Math.random() * soundRecords.length);
+  if (soundRecords.length > 1 && nextIndex === soundCurrentIndex) {
+    nextIndex = (nextIndex + 1 + Math.floor(Math.random() * (soundRecords.length - 1))) % soundRecords.length;
+  }
+  soundCurrentIndex = nextIndex;
+  return soundRecords[nextIndex];
+}
+
 function playNextSound() {
-  if (!soundsEnabled || !soundRecords.length) {
+  if (!soundsEnabled || !soundRecords.length || !isSiteVisible()) {
     stopSoundLoop();
     return;
   }
-  const record = soundRecords[soundCurrentIndex % soundRecords.length];
-  soundCurrentIndex = (soundCurrentIndex + 1) % soundRecords.length;
+  const record = getRandomSoundRecord();
+  if (!record) {
+    stopSoundLoop();
+    return;
+  }
   if (soundCurrentUrl) URL.revokeObjectURL(soundCurrentUrl);
   soundCurrentUrl = URL.createObjectURL(record.blob);
   soundPlayer.src = soundCurrentUrl;
@@ -1055,6 +1072,10 @@ function updateSoundPlayback() {
   soundPlayer.volume = soundVolume;
   if (!soundsEnabled || !soundRecords.length) {
     stopSoundLoop();
+    return;
+  }
+  if (!isSiteVisible()) {
+    soundPlayer.pause();
     return;
   }
   if (isSoundLoopStarting || !soundPlayer.paused) return;
@@ -2101,7 +2122,7 @@ soundFileInput?.addEventListener("change", (event) => {
     console.warn("writeSoundRecord error:", error);
     const failedIds = new Set(records.map((record) => record.id));
     soundRecords = soundRecords.filter((record) => !failedIds.has(record.id));
-    soundCurrentIndex = 0;
+    soundCurrentIndex = -1;
     renderSoundsUi();
     updateSoundPlayback();
   });
@@ -2211,7 +2232,10 @@ window.addEventListener("pagehide", () => {
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
     saveFastProgressForCurrentUser();
+    soundPlayer.pause();
+    return;
   }
+  updateSoundPlayback();
 });
 
 registerBtn.addEventListener("click", async () => {
