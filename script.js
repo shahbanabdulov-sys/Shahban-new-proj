@@ -410,7 +410,7 @@ function toFastSnapshot(snapshot = null) {
     candleZoom: toSafeNumber(source.candleZoom, candleZoom),
     commentsVisible: source.commentsVisible !== false,
     candleComments: Array.isArray(source.candleComments) ? source.candleComments : candleComments,
-    totalPoints: Math.max(0, toSafeNumber(source.totalPoints, totalPoints)),
+    totalPoints: toSafeNumber(source.totalPoints, totalPoints),
     levels: Array.isArray(source.levels) ? source.levels : levels,
     tasksGlobalEnabled: source.tasksGlobalEnabled !== false,
     tasks: Array.isArray(source.tasks) ? source.tasks : tasks,
@@ -466,7 +466,7 @@ function applySnapshot(parsed, options = {}) {
   currentValue = toSafeNumber(parsed.currentValue, history[history.length - 1].y);
   previousValue = currentValue;
   currentX = toSafeNumber(parsed.currentX, currentX);
-  totalPoints = Math.max(0, toSafeNumber(parsed.totalPoints, 0));
+  totalPoints = toSafeNumber(parsed.totalPoints, toDisplayValue(currentValue));
   if (Array.isArray(parsed.levels)) {
     const cleaned = parsed.levels
       .map((item) => ({
@@ -1097,7 +1097,7 @@ function insertHistoryPoint(timestamp, value) {
 }
 
 function applyTaskScore(deltaPoints, timestamp) {
-  const nextPoints = Math.max(0, totalPoints + deltaPoints);
+  const nextPoints = totalPoints + deltaPoints;
   totalPoints = nextPoints;
   previousValue = currentValue;
   currentValue = -(nextPoints / valueStepPerGrid) * gridStepPx;
@@ -1796,7 +1796,7 @@ function frame(now) {
     pendingVerticalDelta = 0;
     const pointsNow = toDisplayValue(currentValue);
     if (Number.isFinite(pointsNow)) {
-      totalPoints = Math.max(0, pointsNow);
+      totalPoints = pointsNow;
     }
     currentX += speedX * dt;
     updateLivePoints();
