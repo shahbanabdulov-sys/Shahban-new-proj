@@ -1366,8 +1366,8 @@ function answerActiveTask(status) {
   const scheduledAt = getScheduledTimestampForDate(task.time, now);
   task.reports = task.reports && typeof task.reports === "object" ? task.reports : {};
   task.reports[dateKey] = { status, answeredAt: now, scheduledAt };
-  if (status === "done") applyTaskScore(task.reward, scheduledAt);
-  if (status === "failed") applyTaskScore(-task.penalty, scheduledAt);
+  if (status === "done") applyTaskScore(task.reward, now);
+  if (status === "failed") applyTaskScore(-task.penalty, now);
   closeTaskReportModal();
   saveProgressForCurrentUser();
   renderTasksUi();
