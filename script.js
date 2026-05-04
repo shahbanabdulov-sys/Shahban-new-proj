@@ -109,7 +109,6 @@ const gridStepPx = 60;
 const valueStepPerGrid = 5;
 
 const pointIntervalMs = 60;
-const maxHistoryMs = 32 * 24 * 60 * 60 * 1000;
 const history = [];
 let lastPointAt = 0;
 
@@ -120,6 +119,12 @@ const rangeMap = {
   "15d": 15 * 24 * 60 * 60 * 1000,
   "30d": 30 * 24 * 60 * 60 * 1000,
 };
+
+const DEFAULT_LEVELS = [
+  { name: "Новичок", points: 0 },
+  { name: "Уверенный", points: 200 },
+  { name: "Профи", points: 600 },
+];
 
 const candleRangeMap = {
   "5m": 5 * 60 * 1000,
@@ -136,7 +141,9 @@ let selectedCandleRange = "5m";
 let selectedMode = "live";
 let currentUser = null;
 let isProgressLoaded = false;
+let isCloudProgressReconciled = false;
 let isApplyingRemoteProgress = false;
+let authStatusOverride = "";
 let lastAutosaveAt = 0;
 let totalPoints = 0;
 let levelsExpanded = false;
@@ -151,11 +158,7 @@ let soundDbPromise = null;
 let soundCurrentUrl = null;
 let soundCurrentIndex = -1;
 let isSoundLoopStarting = false;
-let levels = [
-  { name: "Новичок", points: 0 },
-  { name: "Уверенный", points: 200 },
-  { name: "Профи", points: 600 },
-];
+let levels = DEFAULT_LEVELS.map((level) => ({ ...level }));
 let tasks = [];
 let candleOffset = 0;
 let candleZoom = 1;
@@ -178,15 +181,22 @@ const SOUND_DB_NAME = "productiv-line-sounds";
 const SOUND_STORE_NAME = "sounds";
 const SUPABASE_AUTH_STORAGE_KEY = "productiv-line-auth";
 const FAST_HISTORY_LIMIT = 5000;
+const RECENT_HISTORY_LIMIT = 5000;
+const HISTORY_PAGE_LIMIT = 5000;
+const HISTORY_LOAD_MARGIN_MS = 2 * 60 * 1000;
+const HISTORY_UPSERT_CHUNK_SIZE = 500;
 
 let saveInFlight = false;
 let pendingCloudSaveSnapshot = null;
+const pendingHistoryPointMap = new Map();
 let latestLoadToken = 0;
 let lastSessionUserId = null;
 let lastFastSaveAt = 0;
 let lastFastSavedValue = currentValue;
 let soundsLoadedForUserId = null;
 let isLoadingSounds = false;
+let isLoadingOlderHistory = false;
+let hasMoreOlderHistory = true;
 
 const soundPlayer = new Audio();
 soundPlayer.preload = "auto";
@@ -242,10 +252,47 @@ function getLocalFastProgressKey(userId) {
 }
 
 function getSnapshotSavedAt(snapshot) {
-  const numericSavedAt = Number(snapshot?.savedAt);
+  if (!snapshot || typeof snapshot !== "object") return 0;
+  const numericSavedAt = Number(snapshot.savedAt);
   if (Number.isFinite(numericSavedAt)) return numericSavedAt;
-  const parsedSavedAt = Date.parse(snapshot?.savedAt || "");
+  const parsedSavedAt = Date.parse(snapshot.savedAt || "");
   return Number.isFinite(parsedSavedAt) ? parsedSavedAt : 0;
+}
+
+function describeSnapshotSavedAt(snapshot) {
+  const timestamp = getSnapshotSavedAt(snapshot);
+  const date = new Date(timestamp);
+  const iso = timestamp > 0 && Number.isFinite(date.getTime()) ? date.toISOString() : null;
+  return {
+    raw: snapshot?.savedAt ?? null,
+    timestamp,
+    iso,
+  };
+}
+
+function getSnapshotSourceName(snapshot, supabaseSnapshot, localFastSnapshot, localSnapshot) {
+  if (!snapshot) return "none";
+  if (snapshot === supabaseSnapshot) return "supabase";
+  if (snapshot === localFastSnapshot) return "localStorage fast";
+  if (snapshot === localSnapshot) return "localStorage";
+  return "unknown";
+}
+
+function logProgressSnapshotChoice(userId, supabaseSnapshot, localSnapshot, localFastSnapshot, selectedSnapshot) {
+  console.log("progress snapshot choice:", {
+    userId,
+    supabaseSavedAt: describeSnapshotSavedAt(supabaseSnapshot),
+    localStorageSavedAt: describeSnapshotSavedAt(localSnapshot),
+    localFastStorageSavedAt: describeSnapshotSavedAt(localFastSnapshot),
+    selected: getSnapshotSourceName(selectedSnapshot, supabaseSnapshot, localFastSnapshot, localSnapshot),
+    selectedSavedAt: describeSnapshotSavedAt(selectedSnapshot),
+  });
+}
+
+function getProgressLoadErrorMessage(error) {
+  const message = String(error?.message || "");
+  if (message.includes("Supabase is not configured")) return message;
+  return "Не удалось загрузить прогресс из Supabase. Проверьте интернет и настройки Supabase.";
 }
 
 function readLocalSnapshotForUser(userId) {
@@ -331,6 +378,142 @@ function saveFastProgressForCurrentUser(snapshot = null) {
   return nextSnapshot;
 }
 
+function normalizeHistoryPoint(item) {
+  const t = toSafeNumber(Number(item?.t), NaN);
+  const y = toSafeNumber(Number(item?.y), NaN);
+  if (!Number.isFinite(t) || !Number.isFinite(y)) return null;
+  return { t: Math.floor(t), y };
+}
+
+function normalizeHistoryPoints(points) {
+  if (!Array.isArray(points)) return [];
+  return points.map(normalizeHistoryPoint).filter(Boolean);
+}
+
+function getHistoryPointKey(point) {
+  return String(Math.floor(point.t));
+}
+
+function mergeHistoryPoints(...groups) {
+  const byTime = new Map();
+  for (const group of groups) {
+    for (const point of normalizeHistoryPoints(group)) {
+      byTime.set(getHistoryPointKey(point), point);
+    }
+  }
+  return Array.from(byTime.values()).sort((a, b) => a.t - b.t);
+}
+
+function replaceHistoryPoints(points) {
+  const merged = mergeHistoryPoints(points);
+  history.length = 0;
+  for (const point of merged) history.push(point);
+  if (history.length > 0) lastPointAt = history[history.length - 1].t;
+}
+
+function mergeIntoHistory(points) {
+  const merged = mergeHistoryPoints(history, points);
+  history.length = 0;
+  for (const point of merged) history.push(point);
+  if (history.length > 0) lastPointAt = Math.max(lastPointAt, history[history.length - 1].t);
+  return merged.length;
+}
+
+function queueHistoryPointForCloud(point) {
+  const normalized = normalizeHistoryPoint(point);
+  if (!normalized || !currentUser?.id || !isProgressLoaded || !isCloudProgressReconciled || isApplyingRemoteProgress) return;
+  pendingHistoryPointMap.set(getHistoryPointKey(normalized), normalized);
+}
+
+function queueHistoryPointsForCloud(points) {
+  for (const point of normalizeHistoryPoints(points)) queueHistoryPointForCloud(point);
+}
+
+async function upsertHistoryPointsForUser(userId, points) {
+  const normalized = mergeHistoryPoints(points);
+  if (!userId || normalized.length === 0) return 0;
+  const client = await getSupabaseClient();
+  let savedCount = 0;
+  for (let i = 0; i < normalized.length; i += HISTORY_UPSERT_CHUNK_SIZE) {
+    const chunk = normalized.slice(i, i + HISTORY_UPSERT_CHUNK_SIZE);
+    const rows = chunk.map((point) => ({
+      user_id: userId,
+      t: point.t,
+      y: point.y,
+    }));
+    const { error } = await client.from("history_points").upsert(rows, { onConflict: "user_id,t" });
+    if (error) throw error;
+    savedCount += rows.length;
+  }
+  if (savedCount > 0) console.log("saveHistoryPoints result:", { userId, savedCount });
+  return savedCount;
+}
+
+async function flushPendingHistoryPointsForUser(userId) {
+  if (!userId || pendingHistoryPointMap.size === 0) return 0;
+  const points = Array.from(pendingHistoryPointMap.values()).sort((a, b) => a.t - b.t);
+  pendingHistoryPointMap.clear();
+  try {
+    return await upsertHistoryPointsForUser(userId, points);
+  } catch (error) {
+    for (const point of points) pendingHistoryPointMap.set(getHistoryPointKey(point), point);
+    throw error;
+  }
+}
+
+async function loadRecentHistoryPointsForUser(userId) {
+  const client = await getSupabaseClient();
+  const { data, error } = await client
+    .from("history_points")
+    .select("t,y")
+    .eq("user_id", userId)
+    .order("t", { ascending: false })
+    .limit(RECENT_HISTORY_LIMIT);
+  if (error) throw error;
+  const points = normalizeHistoryPoints(data).sort((a, b) => a.t - b.t);
+  console.log("loadRecentHistoryPoints result:", { userId, count: points.length });
+  hasMoreOlderHistory = points.length >= RECENT_HISTORY_LIMIT;
+  return points;
+}
+
+async function loadOlderHistoryPointsForCurrentUser() {
+  if (!currentUser?.id || !isProgressLoaded || !isCloudProgressReconciled) return 0;
+  if (isLoadingOlderHistory || !hasMoreOlderHistory || history.length === 0) return 0;
+  isLoadingOlderHistory = true;
+  const userId = currentUser.id;
+  const beforeT = history[0].t;
+  try {
+    const client = await getSupabaseClient();
+    const { data, error } = await client
+      .from("history_points")
+      .select("t,y")
+      .eq("user_id", userId)
+      .lt("t", beforeT)
+      .order("t", { ascending: false })
+      .limit(HISTORY_PAGE_LIMIT);
+    if (error) throw error;
+    const points = normalizeHistoryPoints(data).sort((a, b) => a.t - b.t);
+    if (points.length < HISTORY_PAGE_LIMIT) hasMoreOlderHistory = false;
+    mergeIntoHistory(points);
+    console.log("loadOlderHistoryPoints result:", { userId, beforeT, count: points.length, hasMoreOlderHistory });
+    if (points.length > 0) render();
+    return points.length;
+  } catch (error) {
+    console.warn("loadOlderHistoryPoints error:", error);
+    return 0;
+  } finally {
+    isLoadingOlderHistory = false;
+  }
+}
+
+function ensureHistoryWindowLoaded(startTimestamp) {
+  if (!currentUser?.id || !isProgressLoaded || !isCloudProgressReconciled) return;
+  if (history.length === 0) return;
+  if (startTimestamp <= history[0].t + HISTORY_LOAD_MARGIN_MS) {
+    loadOlderHistoryPointsForCurrentUser();
+  }
+}
+
 function createTaskId() {
   return `task-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -372,25 +555,56 @@ function getScheduledTimestampForDate(time, timestamp = Date.now()) {
   return d.getTime();
 }
 
-function getSnapshot() {
+function getEmptySnapshot() {
+  const now = Date.now();
   return {
     version: 1,
-    savedAt: Date.now(),
-    currentValue,
-    currentX,
-    selectedRange,
-    selectedViewType,
-    selectedCandleRange,
-    candleOffset,
-    candleZoom,
-    commentsVisible,
-    candleComments,
-    totalPoints,
-    levels,
-    tasksGlobalEnabled,
-    tasks,
-    soundsEnabled,
-    soundVolume,
+    savedAt: now,
+    currentValue: 0,
+    currentX: 0,
+    selectedRange: "1h",
+    selectedViewType: "line",
+    selectedCandleRange: "5m",
+    candleOffset: 0,
+    candleZoom: 1,
+    commentsVisible: true,
+    candleComments: [],
+    totalPoints: 0,
+    levels: DEFAULT_LEVELS.map((level) => ({ ...level })),
+    tasksGlobalEnabled: true,
+    tasks: [],
+    soundsEnabled: false,
+    soundVolume: 0.65,
+    history: [{ t: now, y: 0 }],
+  };
+}
+
+function getStateSnapshot(source = null) {
+  const item = source && typeof source === "object" ? source : {};
+  return {
+    version: item.version || 1,
+    savedAt: item.savedAt || Date.now(),
+    currentValue: toSafeNumber(item.currentValue, currentValue),
+    currentX: toSafeNumber(item.currentX, currentX),
+    selectedRange: item.selectedRange || selectedRange,
+    selectedViewType: item.selectedViewType || selectedViewType,
+    selectedCandleRange: item.selectedCandleRange || selectedCandleRange,
+    candleOffset: toSafeNumber(item.candleOffset, candleOffset),
+    candleZoom: Math.max(0.5, Math.min(4, toSafeNumber(Number(item.candleZoom), candleZoom))),
+    commentsVisible: item.commentsVisible !== false,
+    candleComments: Array.isArray(item.candleComments) ? item.candleComments : candleComments,
+    totalPoints: toSafeNumber(item.totalPoints, totalPoints),
+    levels: Array.isArray(item.levels) ? item.levels : levels,
+    tasksGlobalEnabled: item.tasksGlobalEnabled !== false,
+    tasks: Array.isArray(item.tasks) ? item.tasks : tasks,
+    soundsEnabled: item.soundsEnabled === true,
+    soundVolume: Math.max(0, Math.min(1, toSafeNumber(Number(item.soundVolume), soundVolume))),
+  };
+}
+
+function getSnapshot() {
+  return {
+    ...getStateSnapshot(),
     history: history.slice(-50000),
   };
 }
@@ -399,23 +613,7 @@ function toFastSnapshot(snapshot = null) {
   const source = snapshot || {};
   const sourceHistory = Array.isArray(source.history) ? source.history : history;
   return {
-    version: source.version || 1,
-    savedAt: source.savedAt || Date.now(),
-    currentValue: toSafeNumber(source.currentValue, currentValue),
-    currentX: toSafeNumber(source.currentX, currentX),
-    selectedRange: source.selectedRange || selectedRange,
-    selectedViewType: source.selectedViewType || selectedViewType,
-    selectedCandleRange: source.selectedCandleRange || selectedCandleRange,
-    candleOffset: toSafeNumber(source.candleOffset, candleOffset),
-    candleZoom: toSafeNumber(source.candleZoom, candleZoom),
-    commentsVisible: source.commentsVisible !== false,
-    candleComments: Array.isArray(source.candleComments) ? source.candleComments : candleComments,
-    totalPoints: toSafeNumber(source.totalPoints, totalPoints),
-    levels: Array.isArray(source.levels) ? source.levels : levels,
-    tasksGlobalEnabled: source.tasksGlobalEnabled !== false,
-    tasks: Array.isArray(source.tasks) ? source.tasks : tasks,
-    soundsEnabled: source.soundsEnabled === true,
-    soundVolume: Math.max(0, Math.min(1, toSafeNumber(Number(source.soundVolume), soundVolume))),
+    ...getStateSnapshot(source),
     history: sourceHistory.slice(-FAST_HISTORY_LIMIT),
   };
 }
@@ -536,9 +734,9 @@ function setAuthUiState() {
   registerBtn.classList.toggle("hidden", isLoggedIn);
   loginBtn.classList.toggle("hidden", isLoggedIn);
   logoutBtn.classList.toggle("hidden", !isLoggedIn);
-  authStatus.textContent = isLoggedIn
+  authStatus.textContent = authStatusOverride || (isLoggedIn
     ? (isProgressLoaded ? `В аккаунте: ${currentUser.email || currentUser.id}` : "Загрузка аккаунта...")
-    : "Гость";
+    : "Гость");
   for (const node of appPanelsForAuth) {
     if (!node) continue;
     if (canUseApp) node.classList.remove("hidden");
@@ -559,6 +757,10 @@ async function saveProgressForCurrentUser(snapshot = null) {
     console.log("saveProgressForCurrentUser: нет залогиненного пользователя");
     return null;
   }
+  if (!isCloudProgressReconciled) {
+    console.log("saveProgressForCurrentUser: ожидание сверки прогресса с Supabase");
+    return null;
+  }
   let ownsSaveLock = false;
   try {
     const userId = currentUser.id;
@@ -566,9 +768,11 @@ async function saveProgressForCurrentUser(snapshot = null) {
       console.log("saveProgressForCurrentUser: user id не найден");
       return null;
     }
-    const snapshotToSave = snapshot ? toFastSnapshot(snapshot) : getFastSnapshot();
-    writeLocalFastSnapshotForUser(userId, snapshotToSave);
-    pendingCloudSaveSnapshot = snapshotToSave;
+    const localFastSnapshot = snapshot ? toFastSnapshot(snapshot) : getFastSnapshot();
+    const cloudStateSnapshot = getStateSnapshot(snapshot);
+    if (Array.isArray(snapshot?.history)) queueHistoryPointsForCloud(snapshot.history);
+    writeLocalFastSnapshotForUser(userId, localFastSnapshot);
+    pendingCloudSaveSnapshot = cloudStateSnapshot;
     if (saveInFlight) return null;
 
     saveInFlight = true;
@@ -586,6 +790,7 @@ async function saveProgressForCurrentUser(snapshot = null) {
       const { data, error } = await client.from("user_data").upsert(payload, { onConflict: "user_id" });
       console.log("saveUserData result:", { userId, savedAt: queuedSnapshot.savedAt, data, error });
       if (error) throw error;
+      await flushPendingHistoryPointsForUser(userId);
       lastData = data;
     }
     return lastData;
@@ -1087,13 +1292,11 @@ function updateSoundPlayback() {
 soundPlayer.addEventListener("ended", playNextSound);
 
 function insertHistoryPoint(timestamp, value) {
-  history.push({ t: timestamp, y: value });
+  const point = { t: timestamp, y: value };
+  history.push(point);
   history.sort((a, b) => a.t - b.t);
   lastPointAt = Math.max(lastPointAt, timestamp);
-  const minAllowed = Date.now() - maxHistoryMs;
-  while (history.length > 2 && history[1].t < minAllowed) {
-    history.shift();
-  }
+  queueHistoryPointForCloud(point);
 }
 
 function applyTaskScore(deltaPoints, timestamp) {
@@ -1340,17 +1543,19 @@ function setShareLink(text) {
 }
 
 function addHistoryPoint(timestamp) {
+  let point = null;
   if (history.length === 0 || timestamp - lastPointAt >= pointIntervalMs) {
-    history.push({ t: timestamp, y: currentValue });
+    point = { t: timestamp, y: currentValue };
+    history.push(point);
     lastPointAt = timestamp;
   } else {
-    history[history.length - 1] = { t: timestamp, y: currentValue };
+    const previousPoint = history[history.length - 1];
+    if (previousPoint) pendingHistoryPointMap.delete(getHistoryPointKey(previousPoint));
+    point = { t: timestamp, y: currentValue };
+    history[history.length - 1] = point;
+    lastPointAt = timestamp;
   }
-
-  const minAllowed = timestamp - maxHistoryMs;
-  while (history.length > 2 && history[1].t < minAllowed) {
-    history.shift();
-  }
+  queueHistoryPointForCloud(point);
 }
 
 function updateLivePoints() {
@@ -1363,6 +1568,7 @@ function updateLivePoints() {
 
 function getVisibleHistory(now, rangeMs) {
   const start = now - rangeMs;
+  ensureHistoryWindowLoaded(start);
   const visible = [];
   let i = 0;
   while (i < history.length && history[i].t < start) i += 1;
@@ -1570,6 +1776,7 @@ function buildCandles(now, candleMs, candleCount) {
   const totalRange = candleMs * candleCount;
   const end = now - candleOffset;
   const start = end - totalRange;
+  ensureHistoryWindowLoaded(start);
   const grouped = new Map();
 
   for (const point of history) {
@@ -1811,7 +2018,7 @@ function frame(now) {
     lastFastSaveAt = now;
     lastFastSavedValue = currentValue;
   }
-  if (currentUser && now - lastAutosaveAt >= AUTOSAVE_MS) {
+  if (currentUser && isProgressLoaded && isCloudProgressReconciled && now - lastAutosaveAt >= AUTOSAVE_MS) {
     saveProgressForCurrentUser();
     lastAutosaveAt = now;
   }
@@ -1822,12 +2029,19 @@ function frame(now) {
 
 canvas.addEventListener("mousedown", (event) => {
   if (event.button !== 0) return;
-  if (selectedMode !== "live") return;
-  isMouseDown = true;
-  pointerDownX = event.clientX;
-  pointerDownY = event.clientY;
-  pointerDidDrag = false;
-  lastMouseY = event.clientY;
+  if (selectedMode === "live") {
+    isMouseDown = true;
+    pointerDownX = event.clientX;
+    pointerDownY = event.clientY;
+    pointerDidDrag = false;
+    lastMouseY = event.clientY;
+    return;
+  }
+  if (selectedMode === "view" && selectedViewType === "candles") {
+    pointerDownX = event.clientX;
+    pointerDownY = event.clientY;
+    pointerDidDrag = false;
+  }
 });
 
 window.addEventListener("mouseup", () => {
@@ -2221,8 +2435,9 @@ candleCommentDeleteBtn?.addEventListener("click", () => {
 
 window.addEventListener("beforeunload", () => {
   const snapshot = saveFastProgressForCurrentUser();
-  if (snapshot) pendingCloudSaveSnapshot = snapshot;
-  saveProgressForCurrentUser(snapshot);
+  if (snapshot) {
+    saveProgressForCurrentUser(snapshot);
+  }
 });
 
 window.addEventListener("pagehide", () => {
@@ -2238,64 +2453,10 @@ document.addEventListener("visibilitychange", () => {
   updateSoundPlayback();
 });
 
-registerBtn.addEventListener("click", async () => {
-  const email = authEmail.value;
-  const password = authPassword.value;
-
-  const client = await getSupabaseClient();
-  const { error } = await client.auth.signUp({
-    email,
-    password
-  });
-
-  if (error) {
-    authStatus.textContent = "Ошибка регистрации: " + error.message;
-    return;
-  }
-
-  authStatus.textContent = "Регистрация успешна. Проверьте email.";
-});
-
-loginBtn.addEventListener("click", async () => {
-  const email = authEmail.value;
-  const password = authPassword.value;
-  isProgressLoaded = false;
-
-  const client = await getSupabaseClient();
-  const { data, error } = await client.auth.signInWithPassword({
-    email,
-    password
-  });
-
-  if (error) {
-    authStatus.textContent = "Ошибка входа: " + error.message;
-    return;
-  }
-
-  currentUser = data.user;
-  authStatus.textContent = "Вы вошли: " + currentUser.email;
-  await loadCurrentUserData(data.session);
-});
-
-logoutBtn.addEventListener("click", async () => {
-  await saveProgressForCurrentUser();
-  const client = await getSupabaseClient();
-  await client.auth.signOut();
-  currentUser = null;
-  lastSessionUserId = null;
-  isProgressLoaded = false;
-  soundRecords = [];
-  soundsLoadedForUserId = null;
-  soundsEnabled = false;
-  stopSoundLoop();
-  authStatus.textContent = "Вы вышли";
-  setAuthUiState();
-  renderSoundsUi();
-});
-
 async function handleRegisterClick(event) {
   event.preventDefault();
   event.stopImmediatePropagation();
+  authStatusOverride = "";
   const email = authEmail.value;
   const password = authPassword.value;
   authStatus.textContent = "Регистрация...";
@@ -2320,6 +2481,7 @@ async function handleRegisterClick(event) {
 async function handleLoginClick(event) {
   event.preventDefault();
   event.stopImmediatePropagation();
+  authStatusOverride = "";
   const email = authEmail.value;
   const password = authPassword.value;
   authStatus.textContent = "Вход...";
@@ -2328,16 +2490,17 @@ async function handleLoginClick(event) {
     const client = await withTimeout(getSupabaseClient(), 10000, "supabase");
     const { data, error } = await withTimeout(client.auth.signInWithPassword({ email, password }), 15000, "sign in");
     if (error) {
-      authStatus.textContent = "Ошибка входа: " + error.message;
-      isProgressLoaded = Boolean(currentUser?.id);
+      authStatusOverride = "Ошибка входа: " + error.message;
+      isProgressLoaded = Boolean(currentUser?.id && isCloudProgressReconciled);
       setAuthUiState();
       return;
     }
 
     currentUser = data.user;
     lastSessionUserId = data.user?.id || null;
-    isProgressLoaded = true;
-    authStatus.textContent = "Вы вошли: " + (currentUser.email || currentUser.id);
+    isProgressLoaded = false;
+    isCloudProgressReconciled = false;
+    authStatus.textContent = "Загрузка аккаунта...";
 
     const cachedSnapshot = getNewestSnapshot(
       readLocalFastSnapshotForUser(currentUser.id),
@@ -2355,8 +2518,8 @@ async function handleLoginClick(event) {
   } catch (error) {
     console.error("login error:", error);
     if (!supabase) supabaseClientPromise = null;
-    authStatus.textContent = "Не удалось войти. Проверьте интернет и настройки Supabase.";
-    isProgressLoaded = Boolean(currentUser?.id);
+    authStatusOverride = "Не удалось войти. Проверьте интернет и настройки Supabase.";
+    isProgressLoaded = Boolean(currentUser?.id && isCloudProgressReconciled);
     setAuthUiState();
   } finally {
     setAuthBusy(false);
@@ -2366,13 +2529,19 @@ async function handleLoginClick(event) {
 async function handleLogoutClick(event) {
   event.preventDefault();
   event.stopImmediatePropagation();
-  const snapshot = saveFastProgressForCurrentUser();
-  if (snapshot) pendingCloudSaveSnapshot = snapshot;
+  authStatusOverride = "";
   const previousUserId = currentUser?.id || null;
+  latestLoadToken += 1;
+  const snapshot = saveFastProgressForCurrentUser();
+  if (snapshot) await saveProgressForCurrentUser(snapshot);
 
   currentUser = null;
   lastSessionUserId = null;
   isProgressLoaded = false;
+  isCloudProgressReconciled = false;
+  pendingHistoryPointMap.clear();
+  hasMoreOlderHistory = true;
+  isLoadingOlderHistory = false;
   soundRecords = [];
   soundsLoadedForUserId = null;
   soundsEnabled = false;
@@ -2415,8 +2584,13 @@ if (location.protocol.startsWith("http")) {
 
 async function loadCurrentUserData(session = null) {
   const loadToken = ++latestLoadToken;
-  const hadReadyUser = Boolean(currentUser?.id && isProgressLoaded);
-  if (!hadReadyUser) isProgressLoaded = false;
+  const hadReconciledUser = Boolean(currentUser?.id && isProgressLoaded && isCloudProgressReconciled);
+  if (!hadReconciledUser) {
+    isProgressLoaded = false;
+    isCloudProgressReconciled = false;
+  }
+  authStatusOverride = "";
+  setAuthUiState();
   try {
     let activeSession = session;
     const client = await getSupabaseClient();
@@ -2432,6 +2606,12 @@ async function loadCurrentUserData(session = null) {
     if (!user) {
       lastSessionUserId = null;
       currentUser = null;
+      isProgressLoaded = false;
+      isCloudProgressReconciled = false;
+      pendingHistoryPointMap.clear();
+      hasMoreOlderHistory = true;
+      isLoadingOlderHistory = false;
+      authStatusOverride = "";
       soundRecords = [];
       soundsLoadedForUserId = null;
       soundsEnabled = false;
@@ -2440,6 +2620,11 @@ async function loadCurrentUserData(session = null) {
       updateHud();
       setMode("live");
       return;
+    }
+    if (currentUser?.id && currentUser.id !== user.id) {
+      pendingHistoryPointMap.clear();
+      hasMoreOlderHistory = true;
+      isLoadingOlderHistory = false;
     }
     lastSessionUserId = user.id;
     currentUser = user;
@@ -2452,22 +2637,59 @@ async function loadCurrentUserData(session = null) {
     console.log("loadUserData result:", { userId: user.id, data, error });
     if (error) throw error;
     if (loadToken !== latestLoadToken) return;
+    const supabaseSnapshot = data?.data && typeof data.data === "object" ? data.data : null;
     const localSnapshot = readLocalSnapshotForUser(user.id);
     const localFastSnapshot = readLocalFastSnapshotForUser(user.id);
-    const localNewestSnapshot = getNewestSnapshot(localFastSnapshot, localSnapshot);
-    const newestSnapshot = hadReadyUser && localNewestSnapshot
-      ? localNewestSnapshot
-      : getNewestSnapshot(data?.data, localSnapshot, localFastSnapshot);
-    if (newestSnapshot) {
+    const newestSnapshot = getNewestSnapshot(supabaseSnapshot, localFastSnapshot, localSnapshot);
+    logProgressSnapshotChoice(user.id, supabaseSnapshot, localSnapshot, localFastSnapshot, newestSnapshot);
+    const embeddedHistory = mergeHistoryPoints(
+      supabaseSnapshot?.history,
+      localFastSnapshot?.history,
+      localSnapshot?.history
+    );
+    const recentHistory = await loadRecentHistoryPointsForUser(user.id);
+    if (loadToken !== latestLoadToken) return;
+    const nextHistory = mergeHistoryPoints(recentHistory, embeddedHistory);
+    const fallbackSnapshot = nextHistory.length > 0
+      ? {
+          savedAt: nextHistory[nextHistory.length - 1].t,
+          currentValue: nextHistory[nextHistory.length - 1].y,
+          totalPoints: toDisplayValue(nextHistory[nextHistory.length - 1].y),
+          history: nextHistory,
+        }
+      : getEmptySnapshot();
+    const newestSnapshotHistory = nextHistory.length > 0
+      ? nextHistory
+      : [{
+          t: getSnapshotSavedAt(newestSnapshot) || Date.now(),
+          y: toSafeNumber(Number(newestSnapshot?.currentValue), 0),
+        }];
+    const snapshotToApply = newestSnapshot
+      ? { ...newestSnapshot, history: newestSnapshotHistory }
+      : fallbackSnapshot;
+    if (snapshotToApply) {
       isApplyingRemoteProgress = true;
-      applySnapshot(newestSnapshot);
+      applySnapshot(snapshotToApply);
       isApplyingRemoteProgress = false;
-      writeLocalFastSnapshotForUser(user.id, newestSnapshot);
+      const localSnapshotToWrite = { ...getStateSnapshot(snapshotToApply), history: history.slice(-50000) };
+      writeLocalFastSnapshotForUser(user.id, localSnapshotToWrite);
+      writeLocalSnapshotForUser(user.id, localSnapshotToWrite);
       updateHud();
     }
     isProgressLoaded = true;
-    if (newestSnapshot && newestSnapshot !== data?.data && getSnapshotSavedAt(newestSnapshot) > getSnapshotSavedAt(data?.data)) {
-      saveProgressForCurrentUser(newestSnapshot);
+    isCloudProgressReconciled = true;
+    authStatusOverride = "";
+    const supabaseHasEmbeddedHistory = Object.prototype.hasOwnProperty.call(supabaseSnapshot || {}, "history");
+    if (embeddedHistory.length > 0) queueHistoryPointsForCloud(embeddedHistory);
+    if (newestSnapshot && (
+      supabaseHasEmbeddedHistory ||
+      (newestSnapshot !== supabaseSnapshot && getSnapshotSavedAt(newestSnapshot) > getSnapshotSavedAt(supabaseSnapshot))
+    )) {
+      saveProgressForCurrentUser({ ...newestSnapshot, history: embeddedHistory });
+    } else {
+      flushPendingHistoryPointsForUser(user.id).catch((historyError) => {
+        console.warn("flushPendingHistoryPoints error:", historyError);
+      });
     }
     setAuthUiState();
     render();
@@ -2475,17 +2697,26 @@ async function loadCurrentUserData(session = null) {
   } catch (error) {
     console.error("loadUserData error:", error);
     isApplyingRemoteProgress = false;
-    if (currentUser?.id) {
+    if (hadReconciledUser && currentUser?.id) {
+      isProgressLoaded = true;
+      isCloudProgressReconciled = true;
+      authStatusOverride = "";
+    } else if (currentUser?.id) {
       const localSnapshot = getNewestSnapshot(readLocalSnapshotForUser(currentUser.id), readLocalFastSnapshotForUser(currentUser.id));
       if (localSnapshot) {
         isApplyingRemoteProgress = true;
         applySnapshot(localSnapshot);
         isApplyingRemoteProgress = false;
-        writeLocalFastSnapshotForUser(currentUser.id, localSnapshot);
+        updateHud();
+        render();
       }
-      isProgressLoaded = true;
+      isProgressLoaded = false;
+      isCloudProgressReconciled = false;
+      authStatusOverride = getProgressLoadErrorMessage(error);
     } else {
       isProgressLoaded = false;
+      isCloudProgressReconciled = false;
+      authStatusOverride = getProgressLoadErrorMessage(error);
     }
     setAuthUiState();
   }
@@ -2500,7 +2731,11 @@ function bootstrapCachedAccount() {
 
   currentUser = cachedUser;
   lastSessionUserId = cachedUser.id;
-  isProgressLoaded = true;
+  isProgressLoaded = false;
+  isCloudProgressReconciled = false;
+  hasMoreOlderHistory = true;
+  isLoadingOlderHistory = false;
+  authStatusOverride = "";
 
   const snapshot = getNewestSnapshot(
     readLocalFastSnapshotForUser(cachedUser.id),
@@ -2511,7 +2746,6 @@ function bootstrapCachedAccount() {
     isApplyingRemoteProgress = true;
     applySnapshot(snapshot);
     isApplyingRemoteProgress = false;
-    saveFastProgressForCurrentUser(snapshot);
   }
 
   updateHud();
@@ -2540,7 +2774,7 @@ getSupabaseClient()
     client.auth.onAuthStateChange((event, session) => {
       console.log("Supabase auth state change:", event, session);
       const sessionUserId = session?.user?.id || null;
-      if (sessionUserId === lastSessionUserId && currentUser?.id === sessionUserId && isProgressLoaded) {
+      if (sessionUserId === lastSessionUserId && currentUser?.id === sessionUserId && isProgressLoaded && isCloudProgressReconciled) {
         return;
       }
       if (!sessionUserId && !lastSessionUserId && !currentUser) {
