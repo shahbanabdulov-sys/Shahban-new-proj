@@ -31,6 +31,11 @@ const taskDescriptionInput = document.getElementById("taskDescriptionInput");
 const taskRewardInput = document.getElementById("taskRewardInput");
 const taskPenaltyInput = document.getElementById("taskPenaltyInput");
 const taskTimeInput = document.getElementById("taskTimeInput");
+const marathonFormNode = document.getElementById("marathonForm");
+const marathonTitleInput = document.getElementById("marathonTitleInput");
+const marathonDaysInput = document.getElementById("marathonDaysInput");
+const marathonTaskCountInput = document.getElementById("marathonTaskCountInput");
+const marathonsListNode = document.getElementById("marathonsList");
 const tasksListNode = document.getElementById("tasksList");
 const tasksTabBadgeNode = document.getElementById("tasksTabBadge");
 const activeTasksCountNode = document.getElementById("activeTasksCount");
@@ -160,6 +165,7 @@ let soundCurrentIndex = -1;
 let isSoundLoopStarting = false;
 let levels = DEFAULT_LEVELS.map((level) => ({ ...level }));
 let tasks = [];
+let marathons = [];
 let candleOffset = 0;
 let candleZoom = 1;
 let hoveredCandle = null;
@@ -518,6 +524,10 @@ function createTaskId() {
   return `task-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function createMarathonId() {
+  return `marathon-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 function normalizeTime(value) {
   const text = String(value || "").trim();
   return /^\d{2}:\d{2}$/.test(text) ? text : "";
@@ -555,6 +565,100 @@ function getScheduledTimestampForDate(time, timestamp = Date.now()) {
   return d.getTime();
 }
 
+function normalizeDateKey(value) {
+  const text = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return "";
+  const [year, month, day] = text.split("-").map(Number);
+  const d = new Date(year, month - 1, day);
+  if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) return "";
+  return text;
+}
+
+function dateKeyToLocalDate(dateKey) {
+  const normalized = normalizeDateKey(dateKey);
+  if (!normalized) return null;
+  const [year, month, day] = normalized.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function dateKeyToUtcDay(dateKey) {
+  const normalized = normalizeDateKey(dateKey);
+  if (!normalized) return NaN;
+  const [year, month, day] = normalized.split("-").map(Number);
+  return Math.floor(Date.UTC(year, month - 1, day) / (24 * 60 * 60 * 1000));
+}
+
+function addDaysToDateKey(dateKey, days) {
+  const start = dateKeyToLocalDate(dateKey);
+  if (!start) return getLocalDateKey();
+  start.setDate(start.getDate() + Math.floor(toSafeNumber(Number(days), 0)));
+  return getLocalDateKey(start.getTime());
+}
+
+function diffDateKeys(laterDateKey, earlierDateKey) {
+  const later = dateKeyToUtcDay(laterDateKey);
+  const earlier = dateKeyToUtcDay(earlierDateKey);
+  if (!Number.isFinite(later) || !Number.isFinite(earlier)) return NaN;
+  return later - earlier;
+}
+
+function getScheduledTimestampForDateKey(time, dateKey) {
+  const d = dateKeyToLocalDate(dateKey);
+  if (!d) return NaN;
+  const [hours, minutes] = normalizeTime(time).split(":").map(Number);
+  d.setHours(hours || 0, minutes || 0, 0, 0);
+  return d.getTime();
+}
+
+function getMarathonEndDate(marathon) {
+  return addDaysToDateKey(marathon.startDate, marathon.durationDays - 1);
+}
+
+function getMarathonProgress(marathon, now = Date.now()) {
+  const today = getLocalDateKey(now);
+  const started = diffDateKeys(today, marathon.startDate) + 1;
+  return Math.max(0, Math.min(marathon.durationDays, started));
+}
+
+function normalizeMarathonTask(item, durationDays = 1) {
+  const title = String(item?.title || "").trim().slice(0, 60);
+  const time = normalizeTime(item?.time);
+  if (!title || !time) return null;
+  const repeat = item?.repeat === "once" ? "once" : "daily";
+  const day = Math.max(1, Math.min(durationDays, Math.floor(toSafeNumber(Number(item?.day), 1))));
+  const reports = item?.reports && typeof item.reports === "object" ? item.reports : {};
+  return {
+    id: String(item?.id || createTaskId()),
+    title,
+    description: String(item?.description || "").trim().slice(0, 300),
+    reward: Math.max(0, Math.floor(toSafeNumber(Number(item?.reward), 0))),
+    penalty: Math.max(0, Math.floor(toSafeNumber(Number(item?.penalty), 0))),
+    time,
+    repeat,
+    day,
+    enabled: item?.enabled !== false,
+    reports,
+  };
+}
+
+function normalizeMarathon(item) {
+  const title = String(item?.title || "").trim().slice(0, 60);
+  if (!title) return null;
+  const durationDays = Math.max(1, Math.min(365, Math.floor(toSafeNumber(Number(item?.durationDays ?? item?.days), 1))));
+  const plannedTaskCount = Math.max(0, Math.min(100, Math.floor(toSafeNumber(Number(item?.plannedTaskCount), 0))));
+  const startDate = normalizeDateKey(item?.startDate) || getLocalDateKey();
+  const rawTasks = Array.isArray(item?.tasks) ? item.tasks : [];
+  return {
+    id: String(item?.id || createMarathonId()),
+    title,
+    startDate,
+    durationDays,
+    plannedTaskCount,
+    enabled: item?.enabled !== false,
+    tasks: rawTasks.map((task) => normalizeMarathonTask(task, durationDays)).filter(Boolean),
+  };
+}
+
 function getEmptySnapshot() {
   const now = Date.now();
   return {
@@ -573,6 +677,7 @@ function getEmptySnapshot() {
     levels: DEFAULT_LEVELS.map((level) => ({ ...level })),
     tasksGlobalEnabled: true,
     tasks: [],
+    marathons: [],
     soundsEnabled: false,
     soundVolume: 0.65,
     history: [{ t: now, y: 0 }],
@@ -597,6 +702,7 @@ function getStateSnapshot(source = null) {
     levels: Array.isArray(item.levels) ? item.levels : levels,
     tasksGlobalEnabled: item.tasksGlobalEnabled !== false,
     tasks: Array.isArray(item.tasks) ? item.tasks : tasks,
+    marathons: Array.isArray(item.marathons) ? item.marathons : marathons,
     soundsEnabled: item.soundsEnabled === true,
     soundVolume: Math.max(0, Math.min(1, toSafeNumber(Number(item.soundVolume), soundVolume))),
   };
@@ -635,6 +741,7 @@ function getFastSnapshot() {
     levels,
     tasksGlobalEnabled,
     tasks,
+    marathons,
     soundsEnabled,
     soundVolume,
     history,
@@ -682,6 +789,12 @@ function applySnapshot(parsed, options = {}) {
       .filter(Boolean)
       .sort((a, b) => a.time.localeCompare(b.time));
   }
+  marathons = Array.isArray(parsed.marathons)
+    ? parsed.marathons
+      .map(normalizeMarathon)
+      .filter(Boolean)
+      .sort((a, b) => a.startDate.localeCompare(b.startDate) || a.title.localeCompare(b.title))
+    : [];
   soundsEnabled = parsed.soundsEnabled === true;
   soundVolume = Math.max(0, Math.min(1, toSafeNumber(Number(parsed.soundVolume), 0.65)));
 
@@ -906,44 +1019,322 @@ function renderLevelsUi() {
   }
 }
 
-function renderTasksUi() {
-  if (tasksGlobalEnabledInput) tasksGlobalEnabledInput.checked = tasksGlobalEnabled;
-  const activeCount = tasks.filter((task) => task.enabled).length;
-  const dueCount = getDueTasks(Date.now()).length;
-  const nextTask = getNextPendingTask();
-  if (tasksTabBadgeNode) tasksTabBadgeNode.textContent = String(dueCount || activeCount);
-  if (activeTasksCountNode) activeTasksCountNode.textContent = String(activeCount);
-  if (dueTasksCountNode) dueTasksCountNode.textContent = String(dueCount);
-  if (nextTaskTimeNode) {
-    nextTaskTimeNode.textContent = nextTask ? `${nextTask.time} · ${nextTask.title}` : "—";
+function formatDateKeyShort(dateKey) {
+  const d = dateKeyToLocalDate(dateKey);
+  if (!d) return dateKey || "";
+  return d.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" });
+}
+
+function formatDateKeyLong(dateKey) {
+  const d = dateKeyToLocalDate(dateKey);
+  if (!d) return dateKey || "";
+  return d.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+function isMarathonActiveOnDate(marathon, dateKey) {
+  const dayIndex = diffDateKeys(dateKey, marathon.startDate);
+  return dayIndex >= 0 && dayIndex < marathon.durationDays;
+}
+
+function getMarathonStatusText(marathon, now = Date.now()) {
+  const today = getLocalDateKey(now);
+  const dayIndex = diffDateKeys(today, marathon.startDate);
+  if (dayIndex < 0) return `Старт ${formatDateKeyShort(marathon.startDate)}`;
+  if (dayIndex >= marathon.durationDays) return "Завершен";
+  return `День ${dayIndex + 1} из ${marathon.durationDays}`;
+}
+
+function formatMarathonTaskSchedule(task, marathon) {
+  if (task.repeat === "daily") return `Каждый день в ${task.time}`;
+  const dateKey = addDaysToDateKey(marathon.startDate, task.day - 1);
+  return `День ${task.day}, ${formatDateKeyShort(dateKey)} в ${task.time}`;
+}
+
+function getActiveTaskCount(now = Date.now()) {
+  const today = getLocalDateKey(now);
+  const activeRegular = tasks.filter((task) => task.enabled).length;
+  const activeMarathon = marathons.reduce((sum, marathon) => {
+    if (!marathon.enabled || !isMarathonActiveOnDate(marathon, today)) return sum;
+    return sum + marathon.tasks.filter((task) => task.enabled).length;
+  }, 0);
+  return activeRegular + activeMarathon;
+}
+
+function createRegularTaskOccurrence(task, dateKey) {
+  if (!task.enabled || task.reports?.[dateKey]) return null;
+  const scheduledAt = getScheduledTimestampForDateKey(task.time, dateKey);
+  if (!Number.isFinite(scheduledAt)) return null;
+  return {
+    source: "task",
+    id: task.id,
+    taskId: task.id,
+    title: task.title,
+    description: task.description,
+    reward: task.reward,
+    penalty: task.penalty,
+    time: task.time,
+    dateKey,
+    reportKey: dateKey,
+    scheduledAt,
+  };
+}
+
+function createMarathonTaskOccurrence(marathon, task, dateKey) {
+  if (!marathon.enabled || !task.enabled) return null;
+  const dayIndex = diffDateKeys(dateKey, marathon.startDate);
+  if (dayIndex < 0 || dayIndex >= marathon.durationDays) return null;
+  if (task.repeat === "once" && task.day !== dayIndex + 1) return null;
+  if (task.reports?.[dateKey]) return null;
+  const scheduledAt = getScheduledTimestampForDateKey(task.time, dateKey);
+  if (!Number.isFinite(scheduledAt)) return null;
+  return {
+    source: "marathon",
+    id: task.id,
+    taskId: task.id,
+    marathonId: marathon.id,
+    marathonTitle: marathon.title,
+    marathonDay: dayIndex + 1,
+    title: task.title,
+    description: task.description,
+    reward: task.reward,
+    penalty: task.penalty,
+    time: task.time,
+    dateKey,
+    reportKey: dateKey,
+    scheduledAt,
+  };
+}
+
+function getTaskOccurrencesForDate(dateKey) {
+  const regular = tasks
+    .map((task) => createRegularTaskOccurrence(task, dateKey))
+    .filter(Boolean);
+  const marathonItems = [];
+  for (const marathon of marathons) {
+    for (const task of marathon.tasks) {
+      const occurrence = createMarathonTaskOccurrence(marathon, task, dateKey);
+      if (occurrence) marathonItems.push(occurrence);
+    }
   }
-  if (!tasksListNode) return;
-  const list = tasks.slice().sort((a, b) => a.time.localeCompare(b.time));
-  tasksListNode.innerHTML = "";
-  if (list.length === 0) {
+  return regular.concat(marathonItems).sort((a, b) => a.scheduledAt - b.scheduledAt);
+}
+
+function formatNextTaskLabel(occurrence, now = Date.now()) {
+  const today = getLocalDateKey(now);
+  const dateText = occurrence.dateKey === today
+    ? occurrence.time
+    : `${formatDateKeyShort(occurrence.dateKey)} ${occurrence.time}`;
+  const title = occurrence.source === "marathon"
+    ? `${occurrence.marathonTitle}: ${occurrence.title}`
+    : occurrence.title;
+  return `${dateText} · ${title}`;
+}
+
+function sortMarathonTasks(list) {
+  return list.slice().sort((a, b) => {
+    if (a.repeat !== b.repeat) return a.repeat === "daily" ? -1 : 1;
+    return a.day - b.day || a.time.localeCompare(b.time) || a.title.localeCompare(b.title);
+  });
+}
+
+function renderMarathonTaskForm(marathon) {
+  const form = document.createElement("form");
+  form.className = "marathon-task-form";
+
+  const titleInput = document.createElement("input");
+  titleInput.type = "text";
+  titleInput.maxLength = 60;
+  titleInput.placeholder = "Название задания марафона *";
+  titleInput.required = true;
+
+  const descriptionInput = document.createElement("textarea");
+  descriptionInput.rows = 2;
+  descriptionInput.maxLength = 300;
+  descriptionInput.placeholder = "Описание";
+
+  const grid = document.createElement("div");
+  grid.className = "marathon-task-form-grid";
+
+  const rewardInput = document.createElement("input");
+  rewardInput.type = "number";
+  rewardInput.min = "0";
+  rewardInput.step = "1";
+  rewardInput.placeholder = "Баллы";
+
+  const penaltyInput = document.createElement("input");
+  penaltyInput.type = "number";
+  penaltyInput.min = "0";
+  penaltyInput.step = "1";
+  penaltyInput.placeholder = "Минус";
+
+  const timeInput = document.createElement("input");
+  timeInput.type = "time";
+  timeInput.required = true;
+
+  grid.appendChild(rewardInput);
+  grid.appendChild(penaltyInput);
+  grid.appendChild(timeInput);
+
+  const options = document.createElement("div");
+  options.className = "marathon-task-options";
+
+  const dailyLabel = document.createElement("label");
+  dailyLabel.className = "marathon-task-repeat";
+  const dailyInput = document.createElement("input");
+  dailyInput.type = "checkbox";
+  dailyInput.checked = true;
+  const dailyText = document.createElement("span");
+  dailyText.textContent = "Каждый день марафона";
+  dailyLabel.appendChild(dailyInput);
+  dailyLabel.appendChild(dailyText);
+
+  const daySelect = document.createElement("select");
+  daySelect.disabled = true;
+  for (let day = 1; day <= marathon.durationDays; day += 1) {
+    const option = document.createElement("option");
+    option.value = String(day);
+    option.textContent = `День ${day} · ${formatDateKeyShort(addDaysToDateKey(marathon.startDate, day - 1))}`;
+    daySelect.appendChild(option);
+  }
+
+  dailyInput.addEventListener("change", () => {
+    daySelect.disabled = dailyInput.checked;
+  });
+
+  options.appendChild(dailyLabel);
+  options.appendChild(daySelect);
+
+  const button = document.createElement("button");
+  button.type = "submit";
+  const isFull = marathon.plannedTaskCount > 0 && marathon.tasks.length >= marathon.plannedTaskCount;
+  button.disabled = isFull;
+  button.textContent = isFull ? "Лимит заданий набран" : "Добавить задание в марафон";
+
+  form.appendChild(titleInput);
+  form.appendChild(descriptionInput);
+  form.appendChild(grid);
+  form.appendChild(options);
+  form.appendChild(button);
+
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (marathon.plannedTaskCount > 0 && marathon.tasks.length >= marathon.plannedTaskCount) return;
+    const task = normalizeMarathonTask({
+      title: titleInput.value,
+      description: descriptionInput.value,
+      reward: Number(rewardInput.value),
+      penalty: Number(penaltyInput.value),
+      time: timeInput.value,
+      repeat: dailyInput.checked ? "daily" : "once",
+      day: Number(daySelect.value),
+      enabled: true,
+      reports: {},
+    }, marathon.durationDays);
+    if (!task) return;
+    marathon.tasks = sortMarathonTasks(marathon.tasks.concat(task));
+    saveProgressForCurrentUser();
+    renderTasksUi();
+    checkDueTasks(true);
+  });
+
+  return form;
+}
+
+function renderMarathonTaskRow(marathon, task) {
+  const row = document.createElement("div");
+  row.className = "marathon-task-row";
+  row.classList.toggle("disabled", !task.enabled || !marathon.enabled || !tasksGlobalEnabled);
+
+  const head = document.createElement("div");
+  head.className = "marathon-task-row-head";
+
+  const meta = document.createElement("div");
+  meta.className = "marathon-task-meta";
+  const title = document.createElement("div");
+  title.className = "marathon-task-title";
+  title.textContent = task.title;
+  const sub = document.createElement("div");
+  sub.className = "marathon-task-sub";
+  sub.textContent = `${formatMarathonTaskSchedule(task, marathon)} · +${task.reward} / -${task.penalty}`;
+  meta.appendChild(title);
+  meta.appendChild(sub);
+
+  const switchLabel = document.createElement("label");
+  switchLabel.className = "switch";
+  const switchInput = document.createElement("input");
+  switchInput.type = "checkbox";
+  switchInput.checked = task.enabled;
+  switchInput.addEventListener("change", () => {
+    task.enabled = switchInput.checked;
+    saveProgressForCurrentUser();
+    renderTasksUi();
+    checkDueTasks(true);
+  });
+  const switchSpan = document.createElement("span");
+  switchLabel.appendChild(switchInput);
+  switchLabel.appendChild(switchSpan);
+
+  head.appendChild(meta);
+  head.appendChild(switchLabel);
+  row.appendChild(head);
+
+  if (task.description) {
+    const desc = document.createElement("div");
+    desc.className = "marathon-task-description";
+    desc.textContent = task.description;
+    row.appendChild(desc);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "marathon-task-actions";
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.textContent = "Удалить";
+  remove.addEventListener("click", () => {
+    const ok = window.confirm(`Удалить задание “${task.title}” из марафона?`);
+    if (!ok) return;
+    marathon.tasks = marathon.tasks.filter((itemTask) => itemTask.id !== task.id);
+    taskReportQueue = taskReportQueue.filter((itemTask) => itemTask.source !== "marathon" || itemTask.taskId !== task.id || itemTask.marathonId !== marathon.id);
+    if (activeTaskReport?.source === "marathon" && activeTaskReport.taskId === task.id && activeTaskReport.marathonId === marathon.id) closeTaskReportModal();
+    saveProgressForCurrentUser();
+    renderTasksUi();
+  });
+  actions.appendChild(remove);
+  row.appendChild(actions);
+
+  return row;
+}
+
+function renderMarathonsUi() {
+  if (!marathonsListNode) return;
+  marathonsListNode.innerHTML = "";
+  if (marathons.length === 0) {
     const empty = document.createElement("div");
-    empty.className = "tasks-empty";
-    empty.textContent = "Заданий пока нет.";
-    tasksListNode.appendChild(empty);
+    empty.className = "marathons-empty";
+    empty.textContent = "Марафонов пока нет.";
+    marathonsListNode.appendChild(empty);
     return;
   }
 
-  for (const task of list) {
-    const item = document.createElement("div");
-    item.className = "task-item";
-    item.classList.toggle("disabled", !task.enabled || !tasksGlobalEnabled);
+  const today = getLocalDateKey();
+  const list = marathons.slice().sort((a, b) => a.startDate.localeCompare(b.startDate) || a.title.localeCompare(b.title));
+  for (const marathon of list) {
+    const card = document.createElement("div");
+    card.className = "marathon-card";
+    card.classList.toggle("disabled", !marathon.enabled || !tasksGlobalEnabled);
 
     const head = document.createElement("div");
-    head.className = "task-item-head";
+    head.className = "marathon-card-head";
 
     const meta = document.createElement("div");
-    meta.className = "task-item-meta";
+    meta.className = "marathon-card-meta";
     const title = document.createElement("div");
-    title.className = "task-item-title";
-    title.textContent = task.title;
+    title.className = "marathon-card-title";
+    title.textContent = marathon.title;
     const sub = document.createElement("div");
-    sub.className = "task-item-sub";
-    sub.textContent = `${task.time} · +${task.reward} / -${task.penalty}`;
+    sub.className = "marathon-card-sub";
+    const taskLimit = marathon.plannedTaskCount > 0 ? ` из ${marathon.plannedTaskCount}` : "";
+    sub.textContent = `${getMarathonStatusText(marathon)} · ${formatDateKeyLong(marathon.startDate)} - ${formatDateKeyLong(getMarathonEndDate(marathon))} · ${marathon.tasks.length}${taskLimit} заданий`;
     meta.appendChild(title);
     meta.appendChild(sub);
 
@@ -951,9 +1342,9 @@ function renderTasksUi() {
     switchLabel.className = "switch";
     const switchInput = document.createElement("input");
     switchInput.type = "checkbox";
-    switchInput.checked = task.enabled;
+    switchInput.checked = marathon.enabled;
     switchInput.addEventListener("change", () => {
-      task.enabled = switchInput.checked;
+      marathon.enabled = switchInput.checked;
       saveProgressForCurrentUser();
       renderTasksUi();
       checkDueTasks(true);
@@ -964,45 +1355,156 @@ function renderTasksUi() {
 
     head.appendChild(meta);
     head.appendChild(switchLabel);
-    item.appendChild(head);
+    card.appendChild(head);
 
-    if (task.description) {
-      const desc = document.createElement("div");
-      desc.className = "task-item-description";
-      desc.textContent = task.description;
-      item.appendChild(desc);
+    const progress = document.createElement("div");
+    progress.className = "marathon-card-progress";
+    const progressFill = document.createElement("span");
+    const progressPercent = (getMarathonProgress(marathon) / marathon.durationDays) * 100;
+    progressFill.style.width = `${Math.max(0, Math.min(100, progressPercent))}%`;
+    progress.appendChild(progressFill);
+    card.appendChild(progress);
+
+    const taskList = document.createElement("div");
+    taskList.className = "marathon-task-list";
+    if (marathon.tasks.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "marathon-task-empty";
+      empty.textContent = "Внутри марафона пока нет заданий.";
+      taskList.appendChild(empty);
+    } else {
+      for (const task of sortMarathonTasks(marathon.tasks)) {
+        taskList.appendChild(renderMarathonTaskRow(marathon, task));
+      }
     }
+    card.appendChild(taskList);
+    card.appendChild(renderMarathonTaskForm(marathon));
 
     const actions = document.createElement("div");
-    actions.className = "task-item-actions";
+    actions.className = "marathon-card-actions";
     const remove = document.createElement("button");
     remove.type = "button";
-    remove.textContent = "Удалить";
+    remove.textContent = "Удалить марафон";
     remove.addEventListener("click", () => {
-      const ok = window.confirm(`Удалить задание “${task.title}”?`);
+      const ok = window.confirm(`Удалить марафон “${marathon.title}”?`);
       if (!ok) return;
-      tasks = tasks.filter((itemTask) => itemTask.id !== task.id);
-      taskReportQueue = taskReportQueue.filter((itemTask) => itemTask.id !== task.id);
-      if (activeTaskReport?.id === task.id) closeTaskReportModal();
+      marathons = marathons.filter((item) => item.id !== marathon.id);
+      taskReportQueue = taskReportQueue.filter((itemTask) => itemTask.marathonId !== marathon.id);
+      if (activeTaskReport?.marathonId === marathon.id) closeTaskReportModal();
       saveProgressForCurrentUser();
       renderTasksUi();
     });
     actions.appendChild(remove);
-    item.appendChild(actions);
+    card.appendChild(actions);
 
-    tasksListNode.appendChild(item);
+    if (diffDateKeys(today, marathon.startDate) >= marathon.durationDays) {
+      card.classList.add("completed");
+    }
+
+    marathonsListNode.appendChild(card);
   }
+}
+
+function renderTasksUi() {
+  if (tasksGlobalEnabledInput) tasksGlobalEnabledInput.checked = tasksGlobalEnabled;
+  const activeCount = getActiveTaskCount();
+  const dueCount = getDueTasks(Date.now()).length;
+  const nextTask = getNextPendingTask();
+  if (tasksTabBadgeNode) tasksTabBadgeNode.textContent = String(dueCount || activeCount);
+  if (activeTasksCountNode) activeTasksCountNode.textContent = String(activeCount);
+  if (dueTasksCountNode) dueTasksCountNode.textContent = String(dueCount);
+  if (nextTaskTimeNode) {
+    nextTaskTimeNode.textContent = nextTask ? formatNextTaskLabel(nextTask) : "—";
+  }
+  if (tasksListNode) {
+    const list = tasks.slice().sort((a, b) => a.time.localeCompare(b.time));
+    tasksListNode.innerHTML = "";
+    if (list.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "tasks-empty";
+      empty.textContent = "Заданий пока нет.";
+      tasksListNode.appendChild(empty);
+    } else {
+      for (const task of list) {
+        const item = document.createElement("div");
+        item.className = "task-item";
+        item.classList.toggle("disabled", !task.enabled || !tasksGlobalEnabled);
+
+        const head = document.createElement("div");
+        head.className = "task-item-head";
+
+        const meta = document.createElement("div");
+        meta.className = "task-item-meta";
+        const title = document.createElement("div");
+        title.className = "task-item-title";
+        title.textContent = task.title;
+        const sub = document.createElement("div");
+        sub.className = "task-item-sub";
+        sub.textContent = `${task.time} · +${task.reward} / -${task.penalty}`;
+        meta.appendChild(title);
+        meta.appendChild(sub);
+
+        const switchLabel = document.createElement("label");
+        switchLabel.className = "switch";
+        const switchInput = document.createElement("input");
+        switchInput.type = "checkbox";
+        switchInput.checked = task.enabled;
+        switchInput.addEventListener("change", () => {
+          task.enabled = switchInput.checked;
+          saveProgressForCurrentUser();
+          renderTasksUi();
+          checkDueTasks(true);
+        });
+        const switchSpan = document.createElement("span");
+        switchLabel.appendChild(switchInput);
+        switchLabel.appendChild(switchSpan);
+
+        head.appendChild(meta);
+        head.appendChild(switchLabel);
+        item.appendChild(head);
+
+        if (task.description) {
+          const desc = document.createElement("div");
+          desc.className = "task-item-description";
+          desc.textContent = task.description;
+          item.appendChild(desc);
+        }
+
+        const actions = document.createElement("div");
+        actions.className = "task-item-actions";
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.textContent = "Удалить";
+        remove.addEventListener("click", () => {
+          const ok = window.confirm(`Удалить задание “${task.title}”?`);
+          if (!ok) return;
+          tasks = tasks.filter((itemTask) => itemTask.id !== task.id);
+          taskReportQueue = taskReportQueue.filter((itemTask) => itemTask.source !== "task" || itemTask.taskId !== task.id);
+          if (activeTaskReport?.source === "task" && activeTaskReport.taskId === task.id) closeTaskReportModal();
+          saveProgressForCurrentUser();
+          renderTasksUi();
+        });
+        actions.appendChild(remove);
+        item.appendChild(actions);
+
+        tasksListNode.appendChild(item);
+      }
+    }
+  }
+  renderMarathonsUi();
 }
 
 function getNextPendingTask(now = Date.now()) {
   if (!tasksGlobalEnabled) return null;
-  return tasks
-    .filter((task) => task.enabled && !task.reports?.[getLocalDateKey(now)])
-    .sort((a, b) => {
-      const aTime = getScheduledTimestampForDate(a.time, now);
-      const bTime = getScheduledTimestampForDate(b.time, now);
-      return aTime - bTime;
-    })[0] || null;
+  const today = getLocalDateKey(now);
+  for (let dayOffset = 0; dayOffset <= 366; dayOffset += 1) {
+    const dateKey = addDaysToDateKey(today, dayOffset);
+    const list = getTaskOccurrencesForDate(dateKey);
+    if (list.length === 0) continue;
+    if (dayOffset === 0) return list[0];
+    return list.find((occurrence) => occurrence.scheduledAt >= now) || list[0];
+  }
+  return null;
 }
 
 function openTasksPage() {
@@ -1315,13 +1817,9 @@ function applyTaskScore(deltaPoints, timestamp) {
 function getDueTasks(now = Date.now()) {
   if (!tasksGlobalEnabled) return [];
   const today = getLocalDateKey(now);
-  return tasks
-    .filter((task) => {
-      if (!task.enabled) return false;
-      if (task.reports?.[today]) return false;
-      return getScheduledTimestampForDate(task.time, now) <= now;
-    })
-    .sort((a, b) => a.time.localeCompare(b.time));
+  return getTaskOccurrencesForDate(today)
+    .filter((occurrence) => occurrence.scheduledAt <= now)
+    .sort((a, b) => a.scheduledAt - b.scheduledAt);
 }
 
 function checkDueTasks(force = false) {
@@ -1339,8 +1837,9 @@ function openNextTaskReport() {
   const next = taskReportQueue.shift();
   if (!next) return;
   activeTaskReport = next;
-  const scheduledAt = getScheduledTimestampForDate(next.time);
-  taskReportTimeNode.textContent = `Нужно было выполнить: ${formatOpenTime(scheduledAt)}`;
+  const scheduledAt = Number.isFinite(next.scheduledAt) ? next.scheduledAt : getScheduledTimestampForDate(next.time);
+  const marathonPrefix = next.source === "marathon" ? `Марафон “${next.marathonTitle}” · День ${next.marathonDay}. ` : "";
+  taskReportTimeNode.textContent = `${marathonPrefix}Нужно было выполнить: ${formatOpenTime(scheduledAt)}`;
   taskReportNameNode.textContent = next.title;
   taskReportDescriptionNode.textContent = next.description || "";
   taskReportDescriptionNode.classList.toggle("hidden", !next.description);
@@ -1355,17 +1854,27 @@ function closeTaskReportModal() {
 
 function answerActiveTask(status) {
   if (!activeTaskReport) return;
-  const task = tasks.find((item) => item.id === activeTaskReport.id);
+  let task = null;
+  let reportKey = activeTaskReport.reportKey;
+  let scheduledAt = activeTaskReport.scheduledAt;
+  if (activeTaskReport.source === "marathon") {
+    const marathon = marathons.find((item) => item.id === activeTaskReport.marathonId);
+    task = marathon?.tasks.find((item) => item.id === activeTaskReport.taskId) || null;
+    if (!reportKey) reportKey = activeTaskReport.dateKey;
+    if (!Number.isFinite(scheduledAt) && reportKey) scheduledAt = getScheduledTimestampForDateKey(task?.time, reportKey);
+  } else {
+    task = tasks.find((item) => item.id === activeTaskReport.taskId || item.id === activeTaskReport.id);
+    if (!reportKey) reportKey = getLocalDateKey();
+    if (!Number.isFinite(scheduledAt)) scheduledAt = getScheduledTimestampForDate(task?.time);
+  }
   if (!task) {
     closeTaskReportModal();
     openNextTaskReport();
     return;
   }
   const now = Date.now();
-  const dateKey = getLocalDateKey(now);
-  const scheduledAt = getScheduledTimestampForDate(task.time, now);
   task.reports = task.reports && typeof task.reports === "object" ? task.reports : {};
-  task.reports[dateKey] = { status, answeredAt: now, scheduledAt };
+  task.reports[reportKey || getLocalDateKey(now)] = { status, answeredAt: now, scheduledAt };
   if (status === "done") applyTaskScore(task.reward, now);
   if (status === "failed") applyTaskScore(-task.penalty, now);
   closeTaskReportModal();
@@ -2346,6 +2855,25 @@ taskFormNode?.addEventListener("submit", (event) => {
   if (!task) return;
   tasks = tasks.concat(task).sort((a, b) => a.time.localeCompare(b.time));
   taskFormNode.reset();
+  saveProgressForCurrentUser();
+  renderTasksUi();
+  checkDueTasks(true);
+});
+
+marathonFormNode?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const plannedTaskCountRaw = String(marathonTaskCountInput?.value || "").trim();
+  const marathon = normalizeMarathon({
+    title: marathonTitleInput?.value,
+    durationDays: Number(marathonDaysInput?.value),
+    plannedTaskCount: plannedTaskCountRaw ? Number(plannedTaskCountRaw) : 0,
+    startDate: getLocalDateKey(),
+    enabled: true,
+    tasks: [],
+  });
+  if (!marathon) return;
+  marathons = marathons.concat(marathon).sort((a, b) => a.startDate.localeCompare(b.startDate) || a.title.localeCompare(b.title));
+  marathonFormNode.reset();
   saveProgressForCurrentUser();
   renderTasksUi();
   checkDueTasks(true);

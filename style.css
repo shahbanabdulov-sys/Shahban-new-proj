@@ -527,13 +527,18 @@ body {
   }
 
   .task-form-grid,
+  .marathon-form-grid,
+  .marathon-task-form-grid,
+  .marathon-task-options,
   .task-report-actions,
   .tasks-summary {
     grid-template-columns: 1fr;
   }
 
   .tasks-page-header,
-  .sounds-page-header {
+  .sounds-page-header,
+  .marathon-card-head,
+  .marathon-task-row-head {
     align-items: flex-start;
   }
 
@@ -694,6 +699,7 @@ body {
 .tasks-page-header button,
 .sounds-page-header button,
 .task-form button,
+.marathon-card button,
 .task-item-actions button,
 .task-report-actions button,
 .sounds-controls button,
@@ -707,15 +713,46 @@ body {
   cursor: pointer;
 }
 
+.task-form button:disabled,
+.marathon-card button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .tasks-global-row,
 .sounds-global-row,
 .tasks-summary,
+.tasks-section-heading,
 .task-form,
 .tasks-list,
+.marathons-list,
 .sounds-controls,
 .sounds-list {
   max-width: 860px;
   margin: 0 auto 12px;
+}
+
+.tasks-section-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.tasks-section-title {
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.tasks-section-note {
+  margin-top: 3px;
+  color: #b8c2ff;
+  font-size: 12px;
+}
+
+.marathon-heading {
+  margin-top: 18px;
 }
 
 .tasks-global-row,
@@ -896,7 +933,11 @@ body {
 }
 
 .task-form input,
-.task-form textarea {
+.task-form textarea,
+.task-form select,
+.marathon-task-form input,
+.marathon-task-form textarea,
+.marathon-task-form select {
   width: 100%;
   min-width: 0;
   border: 1px solid rgba(130, 145, 230, 0.4);
@@ -908,13 +949,22 @@ body {
   outline: none;
 }
 
-.task-form textarea {
+.task-form textarea,
+.marathon-task-form textarea {
   resize: vertical;
 }
 
-.task-form-grid {
+.task-form-grid,
+.marathon-task-form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr 140px;
+  gap: 8px;
+}
+
+.marathon-form-grid,
+.marathon-task-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
 
@@ -925,38 +975,58 @@ body {
   padding-bottom: 24px;
 }
 
+.marathons-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 24px;
+}
+
 .tasks-empty,
-.task-item {
+.task-item,
+.marathons-empty,
+.marathon-card {
   border: 1px solid rgba(108, 122, 204, 0.35);
   border-radius: 8px;
   background: rgba(12, 16, 33, 0.78);
 }
 
-.tasks-empty {
+.tasks-empty,
+.marathons-empty,
+.marathon-task-empty {
   padding: 14px;
   color: #b8c2ff;
 }
 
-.task-item {
+.task-item,
+.marathon-card {
   padding: 10px 12px;
 }
 
-.task-item.disabled {
+.task-item.disabled,
+.marathon-card.disabled,
+.marathon-task-row.disabled {
   opacity: 0.58;
 }
 
-.task-item-head {
+.task-item-head,
+.marathon-card-head,
+.marathon-task-row-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
 }
 
-.task-item-meta {
+.task-item-meta,
+.marathon-card-meta,
+.marathon-task-meta {
   min-width: 0;
 }
 
-.task-item-title {
+.task-item-title,
+.marathon-card-title,
+.marathon-task-title {
   overflow: hidden;
   color: #ffffff;
   font-size: 14px;
@@ -966,27 +1036,91 @@ body {
 }
 
 .task-item-sub,
-.task-item-description {
+.task-item-description,
+.marathon-card-sub,
+.marathon-task-sub,
+.marathon-task-description {
   margin-top: 4px;
   color: #b8c2ff;
   font-size: 12px;
 }
 
-.task-item-description {
+.task-item-description,
+.marathon-task-description {
   color: #d9ddff;
   white-space: pre-wrap;
 }
 
-.task-item-actions {
+.task-item-actions,
+.marathon-card-actions,
+.marathon-task-actions {
   display: flex;
   justify-content: flex-end;
   margin-top: 8px;
+  gap: 8px;
 }
 
 .task-item-actions button,
+.marathon-card-actions button,
+.marathon-task-actions button,
 .task-report-actions button.danger {
   border-color: rgba(255, 125, 150, 0.55);
   background: rgba(255, 125, 150, 0.12);
+}
+
+.marathon-card-progress {
+  overflow: hidden;
+  height: 6px;
+  margin-top: 10px;
+  border-radius: 999px;
+  background: rgba(130, 145, 230, 0.16);
+}
+
+.marathon-card-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #79ffb2, #ffd166);
+}
+
+.marathon-task-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(108, 122, 204, 0.28);
+}
+
+.marathon-task-repeat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 37px;
+  padding: 8px 10px;
+  border: 1px solid rgba(130, 145, 230, 0.4);
+  border-radius: 8px;
+  background: rgba(24, 30, 58, 0.9);
+  color: #d9ddff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.marathon-task-repeat input {
+  width: auto;
+  min-width: auto;
+}
+
+.marathon-task-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.marathon-task-row {
+  padding: 9px 10px;
+  border: 1px solid rgba(108, 122, 204, 0.24);
+  border-radius: 8px;
+  background: rgba(24, 30, 58, 0.46);
 }
 
 .task-report-card {
