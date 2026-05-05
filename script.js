@@ -1776,56 +1776,46 @@ function buildCandles(now, candleMs, candleCount) {
   const totalRange = candleMs * candleCount;
   const end = now - candleOffset;
   const start = end - totalRange;
-  ensureHistoryWindowLoaded(start);
-  const grouped = new Map();
-
-  for (const point of history) {
-    if (point.t < start || point.t > end) continue;
-    const bucket = Math.floor(point.t / candleMs) * candleMs;
-    const displayY = toDisplayValue(point.y);
-    const candle = grouped.get(bucket);
-    if (!candle) {
-      grouped.set(bucket, {
-        t: bucket,
-        open: displayY,
-        high: displayY,
-        low: displayY,
-        close: displayY,
-      });
-    } else {
-      candle.high = Math.max(candle.high, displayY);
-      candle.low = Math.min(candle.low, displayY);
-      candle.close = displayY;
-    }
-  }
-
-  let lastKnown = null;
-  let historyIdx = 0;
-  while (historyIdx < history.length && history[historyIdx].t < start) historyIdx += 1;
-  if (historyIdx > 0) lastKnown = toDisplayValue(history[historyIdx - 1].y);
-
   const candles = [];
   const firstBucket = Math.floor(start / candleMs) * candleMs;
   const lastBucket = Math.floor((end - 1) / candleMs) * candleMs;
+  ensureHistoryWindowLoaded(firstBucket);
+
+  let lastKnown = null;
+  let historyIdx = 0;
+  while (historyIdx < history.length && history[historyIdx].t < firstBucket) historyIdx += 1;
+  if (historyIdx > 0) lastKnown = toDisplayValue(history[historyIdx - 1].y);
+
   for (let bucket = firstBucket; bucket <= lastBucket; bucket += candleMs) {
-    while (historyIdx < history.length && history[historyIdx].t < bucket + candleMs) {
-      lastKnown = toDisplayValue(history[historyIdx].y);
+    const bucketEnd = bucket + candleMs;
+    let open = Number.isFinite(lastKnown) ? lastKnown : null;
+    let high = open;
+    let low = open;
+    let close = open;
+
+    while (historyIdx < history.length && history[historyIdx].t < bucketEnd && history[historyIdx].t <= end) {
+      const displayY = toDisplayValue(history[historyIdx].y);
+      if (!Number.isFinite(open)) {
+        open = displayY;
+        high = displayY;
+        low = displayY;
+      } else {
+        high = Math.max(high, displayY);
+        low = Math.min(low, displayY);
+      }
+      close = displayY;
+      lastKnown = displayY;
       historyIdx += 1;
     }
-    const existing = grouped.get(bucket);
-    if (existing) {
-      lastKnown = existing.close;
-      candles.push(existing);
-      continue;
-    }
-    if (!Number.isFinite(lastKnown)) continue;
+    if (!Number.isFinite(open)) continue;
     candles.push({
       t: bucket,
-      open: lastKnown,
-      high: lastKnown,
-      low: lastKnown,
-      close: lastKnown,
+      open,
+      high,
+      low,
+      close,
     });
+    lastKnown = close;
   }
   return { candles, start, end };
 }
