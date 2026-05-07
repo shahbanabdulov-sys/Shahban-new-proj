@@ -191,6 +191,7 @@ const RECENT_HISTORY_LIMIT = 5000;
 const HISTORY_PAGE_LIMIT = 5000;
 const HISTORY_LOAD_MARGIN_MS = 2 * 60 * 1000;
 const HISTORY_UPSERT_CHUNK_SIZE = 500;
+const MOBILE_LAYOUT_MAX = 760;
 
 let saveInFlight = false;
 let pendingCloudSaveSnapshot = null;
@@ -841,9 +842,18 @@ function applySnapshot(parsed, options = {}) {
   return true;
 }
 
+function updateBodyUiClasses() {
+  const isLoggedIn = Boolean(currentUser);
+  const canUseApp = isLoggedIn && isProgressLoaded;
+  document.body.classList.toggle("is-authenticated", isLoggedIn);
+  document.body.classList.toggle("is-app-ready", canUseApp);
+  document.body.classList.toggle("is-mobile-layout", isMobileLayout());
+}
+
 function setAuthUiState() {
   const isLoggedIn = Boolean(currentUser);
   const canUseApp = isLoggedIn && isProgressLoaded;
+  updateBodyUiClasses();
   registerBtn.classList.toggle("hidden", isLoggedIn);
   loginBtn.classList.toggle("hidden", isLoggedIn);
   logoutBtn.classList.toggle("hidden", !isLoggedIn);
@@ -855,13 +865,16 @@ function setAuthUiState() {
     if (canUseApp) node.classList.remove("hidden");
     else node.classList.add("hidden");
   }
-  if (!isLoggedIn) {
+  syncMobileToolbarButtons();
+  if (!canUseApp) {
     closeMobilePanels();
     closeTasksPage();
     closeSoundsPage();
     closeTaskReportModal();
     stopSoundLoop();
-    hintNode.textContent = "Войдите или зарегистрируйтесь, чтобы открыть график и прогресс.";
+    if (!isLoggedIn) {
+      hintNode.textContent = "Войдите или зарегистрируйтесь, чтобы открыть график и прогресс.";
+    }
   }
 }
 
@@ -927,10 +940,37 @@ function resizeCanvas() {
 }
 
 function isMobileLayout() {
-  return window.innerWidth <= 520;
+  return window.innerWidth <= MOBILE_LAYOUT_MAX;
+}
+
+function syncMobileToolbarButtons() {
+  if (!mobileToolbarNode) return;
+  const canUseApp = Boolean(currentUser && isProgressLoaded);
+  const visibleByPanel = {
+    modes: canUseApp,
+    timeframes: canUseApp && selectedMode === "view" && selectedViewType === "line",
+    viewTypes: canUseApp && selectedMode === "view",
+    candleTimeframes: canUseApp && selectedMode === "view" && selectedViewType === "candles",
+    commentControls: canUseApp && selectedMode === "view" && selectedViewType === "candles",
+    tasksTab: canUseApp,
+    soundsTab: canUseApp,
+    levelsPanel: canUseApp,
+    dataControls: canUseApp,
+    authPanel: canUseApp,
+  };
+  mobileToolbarNode.querySelectorAll("button[data-mobile-open]").forEach((button) => {
+    button.hidden = visibleByPanel[button.dataset.mobileOpen] === false;
+  });
+}
+
+function syncResponsiveUi() {
+  updateBodyUiClasses();
+  syncMobileToolbarButtons();
+  if (!isMobileLayout()) closeMobilePanels();
 }
 
 function layoutControls() {
+  syncResponsiveUi();
   if (isMobileLayout()) return;
   if (!isMobileLayout()) {
     for (const node of [modesNode, timeframeNode, viewTypesNode, candleTimeframesNode, commentControlsNode, tasksTabNode, soundsTabNode, dataControlsNode, authPanelNode, levelsPanelNode].filter(Boolean)) {
@@ -1508,6 +1548,7 @@ function getNextPendingTask(now = Date.now()) {
 }
 
 function openTasksPage() {
+  closeMobilePanels();
   renderTasksUi();
   tasksPageNode?.classList.remove("hidden");
 }
@@ -1517,6 +1558,7 @@ function closeTasksPage() {
 }
 
 function openSoundsPage() {
+  closeMobilePanels();
   renderSoundsUi();
   soundsPageNode?.classList.remove("hidden");
   loadSoundsForCurrentUser();
@@ -1616,11 +1658,11 @@ function renderSoundsUi() {
   if (soundsTabBadgeNode) soundsTabBadgeNode.textContent = String(soundRecords.length);
   if (soundsStatusNode) {
     if (!soundRecords.length) {
-      soundsStatusNode.textContent = "Р—Р°РїРёСЃРµР№ РїРѕРєР° РЅРµС‚.";
+      soundsStatusNode.textContent = "Записей пока нет.";
     } else if (soundsEnabled) {
-      soundsStatusNode.textContent = "Р—РІСѓРєРё РІРєР»СЋС‡РµРЅС‹. РќР° С‚РµР»РµС„РѕРЅРµ РёРЅРѕРіРґР° РЅСѓР¶РЅРѕ РЅР°Р¶Р°С‚СЊ РїРµСЂРµРєР»СЋС‡Р°С‚РµР»СЊ РїРѕСЃР»Рµ РІРѕР·РІСЂР°С‚Р° РЅР° СЃР°Р№С‚.";
+      soundsStatusNode.textContent = "Звуки включены. На телефоне иногда нужно нажать переключатель после возврата на сайт.";
     } else {
-      soundsStatusNode.textContent = "Р—РІСѓРєРё РІС‹РєР»СЋС‡РµРЅС‹.";
+      soundsStatusNode.textContent = "Звуки выключены.";
     }
   }
   if (!soundsListNode) return;
@@ -1628,7 +1670,7 @@ function renderSoundsUi() {
   if (!soundRecords.length) {
     const empty = document.createElement("div");
     empty.className = "sounds-empty";
-    empty.textContent = "Р”РѕР±Р°РІСЊС‚Рµ Р°СѓРґРёРѕС„Р°Р№Р»С‹, Рё РѕРЅРё РѕСЃС‚Р°РЅСѓС‚СЃСЏ РїРѕСЃР»Рµ РѕР±РЅРѕРІР»РµРЅРёСЏ СЃС‚СЂР°РЅРёС†С‹.";
+    empty.textContent = "Добавьте аудиофайлы, и они останутся после обновления страницы.";
     soundsListNode.appendChild(empty);
     return;
   }
@@ -1647,7 +1689,7 @@ function renderSoundsUi() {
     meta.appendChild(sub);
     const remove = document.createElement("button");
     remove.type = "button";
-    remove.textContent = "РЈРґР°Р»РёС‚СЊ";
+    remove.textContent = "Удалить";
     remove.addEventListener("click", async () => {
       await deleteSoundRecord(record.id);
       soundRecords = soundRecords.filter((itemRecord) => itemRecord.id !== record.id);
@@ -1770,7 +1812,7 @@ function playNextSound() {
     console.warn("sound playback blocked:", error);
     stopSoundLoop();
     if (soundsStatusNode) {
-      soundsStatusNode.textContent = "Р‘СЂР°СѓР·РµСЂ Р·Р°Р±Р»РѕРєРёСЂРѕРІР°Р» Р°РІС‚РѕР·Р°РїСѓСЃРє. РћС‚РєСЂРѕР№С‚Рµ РІРєР»Р°РґРєСѓ Рё РЅР°Р¶РјРёС‚Рµ РїРµСЂРµРєР»СЋС‡Р°С‚РµР»СЊ Р·РІСѓРєРѕРІ.";
+      soundsStatusNode.textContent = "Браузер заблокировал автозапуск. Откройте вкладку и нажмите переключатель звуков.";
     }
   });
 }
@@ -2020,6 +2062,7 @@ function findCandleByScreenX(screenX) {
 }
 
 function closeMobilePanels() {
+  document.body.classList.remove("is-mobile-panel-open");
   if (mobileOverlayNode) mobileOverlayNode.classList.add("hidden");
   for (const node of [modesNode, timeframeNode, viewTypesNode, candleTimeframesNode, commentControlsNode, tasksTabNode, soundsTabNode, dataControlsNode, authPanelNode, levelsPanelNode]) {
     node?.classList.remove("mobile-open");
@@ -2043,6 +2086,7 @@ function openMobilePanel(id) {
   const node = map[id];
   if (!node) return;
   if (mobileOverlayNode) mobileOverlayNode.classList.remove("hidden");
+  document.body.classList.add("is-mobile-panel-open");
   node.classList.add("mobile-open");
 }
 
@@ -2098,7 +2142,7 @@ function drawLiveGrid(head) {
   const startY = Math.floor((head.y - height) / gridStepPx) * gridStepPx;
   const endY = Math.ceil((head.y + height) / gridStepPx) * gridStepPx;
 
-  ctx.strokeStyle = "rgba(115, 130, 220, 0.12)";
+  ctx.strokeStyle = "rgba(145, 173, 160, 0.14)";
   ctx.lineWidth = 1;
   for (let x = startX; x <= endX; x += gridStepPx) {
     ctx.beginPath();
@@ -2121,14 +2165,21 @@ function drawLiveLine(head) {
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
   ctx.lineWidth = 4;
-  ctx.strokeStyle = "#79ffb2";
+  const gradient = ctx.createLinearGradient(head.x - liveTailLength, head.y, head.x + 120, head.y);
+  gradient.addColorStop(0, "rgba(242, 201, 109, 0.38)");
+  gradient.addColorStop(0.58, "#69e6a3");
+  gradient.addColorStop(1, "#ecf6ef");
+  ctx.shadowColor = "rgba(105, 230, 163, 0.32)";
+  ctx.shadowBlur = 16;
+  ctx.strokeStyle = gradient;
   ctx.beginPath();
   ctx.moveTo(livePoints[0].x, livePoints[0].y);
   for (let i = 1; i < livePoints.length; i += 1) {
     ctx.lineTo(livePoints[i].x, livePoints[i].y);
   }
   ctx.stroke();
-  ctx.fillStyle = "#c4ffd8";
+  ctx.shadowBlur = 18;
+  ctx.fillStyle = "#ecf6ef";
   ctx.beginPath();
   ctx.arc(head.x, head.y, 5, 0, Math.PI * 2);
   ctx.fill();
@@ -2138,7 +2189,7 @@ function drawLiveLine(head) {
 function drawLiveCrosshair() {
   const cx = width / 2;
   const cy = height / 2;
-  ctx.strokeStyle = "rgba(220, 225, 255, 0.35)";
+  ctx.strokeStyle = "rgba(236, 246, 239, 0.42)";
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(cx - 12, cy);
@@ -2149,19 +2200,20 @@ function drawLiveCrosshair() {
 }
 
 function drawLiveAxes(head) {
-  const leftPadding = 52;
-  const bottomPadding = 34;
+  const compact = isMobileLayout();
+  const leftPadding = compact ? 44 : 52;
+  const bottomPadding = compact ? 118 : 34;
   const startY = Math.floor((head.y - height) / gridStepPx) * gridStepPx;
   const endY = Math.ceil((head.y + height) / gridStepPx) * gridStepPx;
   const startX = Math.floor((head.x - width) / gridStepPx) * gridStepPx;
   const endX = Math.ceil((head.x + width) / gridStepPx) * gridStepPx;
 
   ctx.save();
-  ctx.fillStyle = "rgba(8, 11, 23, 0.82)";
+  ctx.fillStyle = compact ? "rgba(5, 12, 12, 0.78)" : "rgba(5, 12, 12, 0.84)";
   ctx.fillRect(0, 0, leftPadding, height);
   ctx.fillRect(0, height - bottomPadding, width, bottomPadding);
 
-  ctx.strokeStyle = "rgba(155, 170, 255, 0.45)";
+  ctx.strokeStyle = "rgba(176, 209, 193, 0.4)";
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(leftPadding, 0);
@@ -2170,8 +2222,8 @@ function drawLiveAxes(head) {
   ctx.lineTo(width, height - bottomPadding);
   ctx.stroke();
 
-  ctx.fillStyle = "#d9ddff";
-  ctx.font = "12px Arial";
+  ctx.fillStyle = "#ecf6ef";
+  ctx.font = `${compact ? 10 : 12}px Arial`;
   for (let worldY = startY; worldY <= endY; worldY += gridStepPx) {
     const screenY = height / 2 + (worldY - head.y);
     if (screenY < 8 || screenY > height - bottomPadding - 4) continue;
@@ -2185,20 +2237,21 @@ function drawLiveAxes(head) {
     if (screenX < leftPadding + 4 || screenX > width - 42) continue;
     const secondsOffset = (worldX - head.x) / speedX;
     const tickDate = new Date(now + secondsOffset * 1000);
-    ctx.fillText(formatClock(tickDate), screenX - 22, height - 12);
+    ctx.fillText(formatClock(tickDate), screenX - 22, height - (compact ? 94 : 12));
   }
   ctx.restore();
 }
 
 function drawViewChart(points, now, rangeMs) {
-  const left = 62;
-  const right = 24;
-  const top = 56;
-  const bottom = 76;
+  const compact = isMobileLayout();
+  const left = compact ? 46 : 62;
+  const right = compact ? 12 : 24;
+  const top = compact ? 84 : 56;
+  const bottom = compact ? 126 : 76;
   const chartW = width - left - right;
   const chartH = height - top - bottom;
 
-  ctx.fillStyle = "rgba(8, 11, 23, 0.82)";
+  ctx.fillStyle = "rgba(5, 12, 12, 0.82)";
   ctx.fillRect(left, top, chartW, chartH);
 
   let minY = Infinity;
@@ -2224,7 +2277,7 @@ function drawViewChart(points, now, rangeMs) {
   const yToScreen = (y) => top + ((maxY - y) / (maxY - minY)) * chartH;
   const xToScreen = (t) => left + ((t - xStart) / rangeMs) * chartW;
 
-  ctx.strokeStyle = "rgba(115, 130, 220, 0.2)";
+  ctx.strokeStyle = "rgba(145, 173, 160, 0.18)";
   ctx.lineWidth = 1;
   ctx.beginPath();
   for (let i = 0; i <= 6; i += 1) {
@@ -2239,10 +2292,16 @@ function drawViewChart(points, now, rangeMs) {
   }
   ctx.stroke();
 
-  ctx.strokeStyle = "#79ffb2";
+  const lineGradient = ctx.createLinearGradient(left, top, left + chartW, top);
+  lineGradient.addColorStop(0, "#f2c96d");
+  lineGradient.addColorStop(0.55, "#69e6a3");
+  lineGradient.addColorStop(1, "#ecf6ef");
+  ctx.strokeStyle = lineGradient;
   ctx.lineWidth = 3;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
+  ctx.shadowColor = "rgba(105, 230, 163, 0.22)";
+  ctx.shadowBlur = compact ? 8 : 12;
   ctx.beginPath();
   for (let i = 0; i < points.length; i += 1) {
     const sx = xToScreen(points[i].t);
@@ -2251,17 +2310,18 @@ function drawViewChart(points, now, rangeMs) {
     else ctx.lineTo(sx, sy);
   }
   ctx.stroke();
+  ctx.shadowBlur = 0;
 
   if (points.length > 0) {
     const last = points[points.length - 1];
-    ctx.fillStyle = "#c4ffd8";
+    ctx.fillStyle = "#ecf6ef";
     ctx.beginPath();
     ctx.arc(xToScreen(last.t), yToScreen(toDisplayValue(last.y)), 4.5, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  ctx.fillStyle = "#d9ddff";
-  ctx.font = "12px Arial";
+  ctx.fillStyle = "#ecf6ef";
+  ctx.font = `${compact ? 10 : 12}px Arial`;
   for (let i = 0; i <= 6; i += 1) {
     const value = maxY - ((maxY - minY) * i) / 6;
     const y = top + (i / 6) * chartH;
@@ -2273,7 +2333,7 @@ function drawViewChart(points, now, rangeMs) {
     ctx.fillText(formatAxisTime(t, selectedRange), x - 28, top + chartH + 20);
   }
 
-  ctx.strokeStyle = "rgba(155, 170, 255, 0.45)";
+  ctx.strokeStyle = "rgba(176, 209, 193, 0.42)";
   ctx.beginPath();
   ctx.moveTo(left, top);
   ctx.lineTo(left, top + chartH);
@@ -2330,10 +2390,11 @@ function buildCandles(now, candleMs, candleCount) {
 }
 
 function drawCandleChart(now, candleMs) {
-  const left = 62;
-  const right = 24;
-  const top = 56;
-  const bottom = 76;
+  const compact = isMobileLayout();
+  const left = compact ? 46 : 62;
+  const right = compact ? 12 : 24;
+  const top = compact ? 84 : 56;
+  const bottom = compact ? 126 : 76;
   const chartW = width - left - right;
   const chartH = height - top - bottom;
   const candleCount = Math.max(20, Math.round(60 / candleZoom));
@@ -2341,12 +2402,12 @@ function drawCandleChart(now, candleMs) {
   hoveredCandle = null;
   lastCandleHitboxes = [];
 
-  ctx.fillStyle = "rgba(8, 11, 23, 0.82)";
+  ctx.fillStyle = "rgba(5, 12, 12, 0.82)";
   ctx.fillRect(left, top, chartW, chartH);
 
   if (candles.length === 0) {
-    ctx.fillStyle = "#d9ddff";
-    ctx.font = "14px Arial";
+    ctx.fillStyle = "#ecf6ef";
+    ctx.font = `${compact ? 12 : 14}px Arial`;
     ctx.fillText("Недостаточно данных для свечей", left + 20, top + 24);
     return;
   }
@@ -2369,7 +2430,7 @@ function drawCandleChart(now, candleMs) {
   const candleWidth = Math.max((chartW * candleAreaRatio / candleCount) * 0.9, 3);
   const candleScreenIndex = new Map();
 
-  ctx.strokeStyle = "rgba(115, 130, 220, 0.2)";
+  ctx.strokeStyle = "rgba(145, 173, 160, 0.18)";
   ctx.lineWidth = 1;
   ctx.beginPath();
   for (let i = 0; i <= 6; i += 1) {
@@ -2391,7 +2452,7 @@ function drawCandleChart(now, candleMs) {
     const yHigh = yToScreen(candle.high);
     const yLow = yToScreen(candle.low);
     const isUp = candle.close >= candle.open;
-    const color = isUp ? "#79ffb2" : "#ff7d96";
+    const color = isUp ? "#69e6a3" : "#ff6f8c";
     candleScreenIndex.set(candle.t, { x, yHigh, yLow });
     lastCandleHitboxes.push({ t: candle.t, x, w: candleWidth * 0.6, candle });
 
@@ -2413,8 +2474,8 @@ function drawCandleChart(now, candleMs) {
     }
   }
 
-  ctx.fillStyle = "#d9ddff";
-  ctx.font = "12px Arial";
+  ctx.fillStyle = "#ecf6ef";
+  ctx.font = `${compact ? 10 : 12}px Arial`;
   for (let i = 0; i <= 6; i += 1) {
     const value = maxY - ((maxY - minY) * i) / 6;
     const y = top + (i / 6) * chartH;
@@ -2422,17 +2483,17 @@ function drawCandleChart(now, candleMs) {
   }
 
   if (commentsVisible) {
-    ctx.font = "11px Arial";
+    ctx.font = `${compact ? 10 : 11}px Arial`;
     for (const note of candleComments) {
       const rounded = Math.floor(note.t / candleMs) * candleMs;
       const point = candleScreenIndex.get(rounded);
       if (!point) continue;
       const textY = Math.max(top + 12, point.yHigh - 10);
-      ctx.fillStyle = "#ffd86b";
+      ctx.fillStyle = "#f2c96d";
       ctx.beginPath();
       ctx.arc(point.x, point.yHigh - 3, 3, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = "rgba(255, 216, 107, 0.9)";
+      ctx.fillStyle = "rgba(242, 201, 109, 0.9)";
       ctx.fillText(note.text, point.x + 6, textY);
     }
   }
@@ -2442,7 +2503,7 @@ function drawCandleChart(now, candleMs) {
     ctx.fillText(formatAxisTime(t, selectedCandleRange), x - 28, top + chartH + 20);
   }
 
-  ctx.strokeStyle = "rgba(155, 170, 255, 0.45)";
+  ctx.strokeStyle = "rgba(176, 209, 193, 0.42)";
   ctx.beginPath();
   ctx.moveTo(left, top);
   ctx.lineTo(left, top + chartH);
@@ -2489,6 +2550,7 @@ function setMode(mode) {
     ? "Зажмите левую кнопку мыши и ведите курсор вверх/вниз, чтобы менять направление."
     : "Просмотр: выберите тип графика и таймфрейм.";
   layoutControls();
+  syncMobileToolbarButtons();
   render();
 }
 
@@ -2673,6 +2735,8 @@ window.addEventListener("resize", () => {
   if (selectedMode === "live" && livePoints.length === 0) {
     initLiveLine();
   }
+  layoutControls();
+  render();
 });
 
 modesNode.addEventListener("click", (event) => {
@@ -2680,6 +2744,7 @@ modesNode.addEventListener("click", (event) => {
   if (!button) return;
   isMouseDown = false;
   setMode(button.dataset.mode);
+  if (isMobileLayout()) closeMobilePanels();
 });
 
 timeframeNode.addEventListener("click", (event) => {
@@ -2690,6 +2755,7 @@ timeframeNode.addEventListener("click", (event) => {
     item.classList.toggle("active", item === button);
   });
   if (selectedMode === "view") render();
+  if (isMobileLayout()) closeMobilePanels();
 });
 
 viewTypesNode.addEventListener("click", (event) => {
@@ -2704,7 +2770,9 @@ viewTypesNode.addEventListener("click", (event) => {
   candleTimeframesNode.classList.toggle("hidden", !(isView && selectedViewType === "candles"));
   commentControlsNode.classList.toggle("hidden", !(isView && selectedViewType === "candles"));
   layoutControls();
+  syncMobileToolbarButtons();
   if (isView) render();
+  if (isMobileLayout()) closeMobilePanels();
 });
 
 candleTimeframesNode.addEventListener("click", (event) => {
@@ -2717,6 +2785,7 @@ candleTimeframesNode.addEventListener("click", (event) => {
   });
   layoutControls();
   if (selectedMode === "view" && selectedViewType === "candles") render();
+  if (isMobileLayout()) closeMobilePanels();
 });
 
 canvas.addEventListener("mousedown", (event) => {
@@ -2766,6 +2835,7 @@ canvas.addEventListener("click", (event) => {
 
 addCommentBtn.addEventListener("click", () => {
   if (selectedMode !== "view" || selectedViewType !== "candles") return;
+  closeMobilePanels();
   const baseTime = selectedCandle?.t ?? hoveredCandle?.t ?? latestCandleHover?.t ?? Date.now();
   openCandleCommentModal(baseTime);
 });
@@ -2774,6 +2844,7 @@ toggleCommentsBtn.addEventListener("click", () => {
   commentsVisible = !commentsVisible;
   toggleCommentsBtn.textContent = commentsVisible ? "Скрыть комментарии" : "Показать комментарии";
   render();
+  if (isMobileLayout()) closeMobilePanels();
 });
 
 openTasksBtn?.addEventListener("click", openTasksPage);

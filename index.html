@@ -11,6 +11,19 @@
     Этот режим доступен только на ПК. Откройте сайт на компьютере.
   </div>
   <canvas id="scene"></canvas>
+  <nav class="mobile-toolbar hidden" id="mobileToolbar" aria-label="Мобильная навигация">
+    <button type="button" data-mobile-open="modes" aria-label="Выбрать режим">Режим</button>
+    <button type="button" data-mobile-open="timeframes" aria-label="Выбрать период линии">Период</button>
+    <button type="button" data-mobile-open="viewTypes" aria-label="Выбрать вид графика">Вид</button>
+    <button type="button" data-mobile-open="candleTimeframes" aria-label="Выбрать период свечей">Свечи</button>
+    <button type="button" data-mobile-open="commentControls" aria-label="Комментарии к свечам">Коммент.</button>
+    <button type="button" data-mobile-open="tasksTab" aria-label="Открыть задания">Задания</button>
+    <button type="button" data-mobile-open="soundsTab" aria-label="Открыть звуки">Звуки</button>
+    <button type="button" data-mobile-open="levelsPanel" aria-label="Настроить уровни">Уровни</button>
+    <button type="button" data-mobile-open="dataControls" aria-label="Ссылка на сайт">Ссылка</button>
+    <button type="button" data-mobile-open="authPanel" aria-label="Аккаунт">Аккаунт</button>
+  </nav>
+  <div class="mobile-overlay hidden" id="mobileOverlay"></div>
   <header class="app-brand hidden" id="appBrand">
     <div class="app-brand-title">Productiv Line</div>
     <div class="app-brand-subtitle">Очки, привычки и живая линия прогресса</div>
@@ -48,7 +61,7 @@
   </div>
 
   <div class="sounds-tab hidden" id="soundsTab">
-    <button id="openSoundsBtn" type="button">Р—РІСѓРєРё <span id="soundsTabBadge">0</span></button>
+    <button id="openSoundsBtn" type="button">Звуки <span id="soundsTabBadge">0</span></button>
   </div>
 
   <div class="modal hidden" id="candleCommentModal" role="dialog" aria-modal="true" aria-labelledby="candleCommentTitle">
@@ -129,13 +142,13 @@
   <section class="sounds-page hidden" id="soundsPage">
     <div class="sounds-page-header">
       <div>
-        <div class="sounds-page-title">Р—РІСѓРєРё</div>
-        <div class="sounds-page-subtitle">РђСѓРґРёРѕР·Р°РїРёСЃРё РґР»СЏ С„РѕРЅРѕРІРѕРіРѕ РІРѕСЃРїСЂРѕРёР·РІРµРґРµРЅРёСЏ</div>
+        <div class="sounds-page-title">Звуки</div>
+        <div class="sounds-page-subtitle">Аудиозаписи для фонового воспроизведения</div>
       </div>
-      <button id="closeSoundsBtn" type="button">Р—Р°РєСЂС‹С‚СЊ</button>
+      <button id="closeSoundsBtn" type="button">Закрыть</button>
     </div>
     <div class="sounds-global-row">
-      <span>РџСЂРѕРёРіСЂС‹РІР°С‚СЊ Р·РІСѓРєРё</span>
+      <span>Проигрывать звуки</span>
       <label class="switch">
         <input id="soundsEnabled" type="checkbox">
         <span></span>
@@ -143,14 +156,14 @@
     </div>
     <div class="sounds-controls">
       <label>
-        <span>Р“СЂРѕРјРєРѕСЃС‚СЊ</span>
+        <span>Громкость</span>
         <input id="soundVolumeInput" type="range" min="0" max="1" step="0.05" value="0.65">
       </label>
       <label class="sound-upload">
-        <span>Р”РѕР±Р°РІРёС‚СЊ Р°СѓРґРёРѕ</span>
+        <span>Добавить аудио</span>
         <input id="soundFileInput" type="file" accept="audio/*" multiple>
       </label>
-      <div id="soundsStatus" class="sounds-status">Р—Р°РїРёСЃРµР№ РїРѕРєР° РЅРµС‚.</div>
+      <div id="soundsStatus" class="sounds-status">Записей пока нет.</div>
     </div>
     <div class="sounds-list" id="soundsList"></div>
   </section>
