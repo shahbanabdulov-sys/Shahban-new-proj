@@ -210,6 +210,7 @@ body {
 }
 
 .tasks-tab,
+.discipline-tab,
 .sounds-tab {
   position: fixed;
   top: 234px;
@@ -224,14 +225,19 @@ body {
   max-width: calc(100vw - 28px);
 }
 
-.sounds-tab {
+.discipline-tab {
   top: 278px;
+}
+
+.sounds-tab {
+  top: 322px;
 }
 
 .view-types button,
 .candle-timeframes button,
 .comment-controls button,
 .tasks-tab button,
+.discipline-tab button,
 .sounds-tab button {
   border: 1px solid rgba(130, 145, 230, 0.4);
   background: rgba(24, 30, 58, 0.9);
@@ -243,6 +249,7 @@ body {
 }
 
 .tasks-tab button span,
+.discipline-tab button span,
 .sounds-tab button span {
   display: inline-flex;
   align-items: center;
@@ -502,6 +509,7 @@ body {
   .candle-timeframes,
   .comment-controls,
   .tasks-tab,
+  .discipline-tab,
   .sounds-tab,
   .data-controls,
   .auth-panel,
@@ -515,6 +523,7 @@ body {
   .candle-timeframes.mobile-open,
   .comment-controls.mobile-open,
   .tasks-tab.mobile-open,
+  .discipline-tab.mobile-open,
   .sounds-tab.mobile-open,
   .data-controls.mobile-open,
   .auth-panel.mobile-open {
@@ -540,6 +549,7 @@ body {
 
 @media (max-width: 720px) {
   .tasks-page,
+  .discipline-page,
   .sounds-page {
     padding: 14px;
   }
@@ -554,6 +564,7 @@ body {
   }
 
   .tasks-page-header,
+  .discipline-page-header,
   .sounds-page-header,
   .marathon-card-head,
   .marathon-task-row-head {
@@ -681,6 +692,7 @@ body {
 }
 
 .tasks-page,
+.discipline-page,
 .sounds-page {
   position: fixed;
   inset: 0;
@@ -691,6 +703,7 @@ body {
 }
 
 .tasks-page-header,
+.discipline-page-header,
 .sounds-page-header {
   max-width: 860px;
   margin: 0 auto 14px;
@@ -701,6 +714,7 @@ body {
 }
 
 .tasks-page-title,
+.discipline-page-title,
 .sounds-page-title {
   font-size: 22px;
   font-weight: 800;
@@ -708,6 +722,7 @@ body {
 }
 
 .tasks-page-subtitle,
+.discipline-page-subtitle,
 .sounds-page-subtitle {
   margin-top: 3px;
   color: #b8c2ff;
@@ -715,13 +730,15 @@ body {
 }
 
 .tasks-page-header button,
+.discipline-page-header button,
 .sounds-page-header button,
 .task-form button,
 .marathon-card button,
 .task-item-actions button,
 .task-report-actions button,
 .sounds-controls button,
-.sound-item button {
+.sound-item button,
+.discipline-actions button {
   border: 1px solid rgba(130, 145, 230, 0.4);
   background: rgba(24, 30, 58, 0.9);
   color: #d9ddff;
@@ -739,11 +756,13 @@ body {
 
 .tasks-global-row,
 .sounds-global-row,
+.discipline-actions,
 .tasks-summary,
 .tasks-section-heading,
 .task-form,
 .tasks-list,
 .marathons-list,
+.discipline-days,
 .sounds-controls,
 .sounds-list {
   max-width: 860px;
@@ -810,6 +829,125 @@ body {
 .sounds-status {
   color: #d9ddff;
   font-size: 12px;
+}
+
+.discipline-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 12px;
+  border: 1px solid rgba(108, 122, 204, 0.35);
+  border-radius: 8px;
+  background: rgba(12, 16, 33, 0.78);
+}
+
+.discipline-actions button.danger {
+  border-color: rgba(255, 111, 140, 0.58);
+  background: rgba(255, 111, 140, 0.14);
+}
+
+.discipline-days {
+  display: grid;
+  gap: 12px;
+  padding-bottom: 24px;
+}
+
+.discipline-day {
+  padding: 12px;
+  border: 1px solid rgba(108, 122, 204, 0.35);
+  border-radius: 8px;
+  background: rgba(12, 16, 33, 0.78);
+}
+
+.discipline-day.today {
+  border-color: rgba(105, 230, 163, 0.5);
+}
+
+.discipline-day-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.discipline-day-title {
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.discipline-day-summary {
+  color: #b8c2ff;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.discipline-hours {
+  display: grid;
+  gap: 4px;
+}
+
+.discipline-hour {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 24px;
+  padding: 3px 6px;
+  border-radius: 7px;
+}
+
+.discipline-hour.current {
+  background: rgba(105, 230, 163, 0.08);
+}
+
+.discipline-hour-label {
+  color: #d9ddff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.discipline-squares {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.discipline-square {
+  width: 14px;
+  min-width: 14px;
+  height: 14px;
+  min-height: 14px;
+  padding: 0;
+  border: 1px solid rgba(236, 246, 239, 0.15);
+  border-radius: 3px;
+  background: rgba(133, 148, 143, 0.42);
+  box-shadow: none;
+}
+
+button.discipline-square {
+  cursor: pointer;
+}
+
+button.discipline-square:hover,
+button.discipline-square:active {
+  transform: none;
+}
+
+.discipline-square.green {
+  border-color: rgba(105, 230, 163, 0.7);
+  background: rgba(105, 230, 163, 0.86);
+}
+
+.discipline-square.red {
+  border-color: rgba(255, 111, 140, 0.75);
+  background: rgba(255, 111, 140, 0.9);
+}
+
+.discipline-square.penalty {
+  box-shadow: 0 0 0 1px rgba(255, 111, 140, 0.2);
 }
 
 .sounds-list {
@@ -1262,6 +1400,7 @@ select:focus-visible {
 .candle-timeframes,
 .comment-controls,
 .tasks-tab,
+.discipline-tab,
 .sounds-tab,
 .data-controls,
 .auth-panel,
@@ -1272,8 +1411,10 @@ select:focus-visible {
 .modal-card,
 .tasks-global-row,
 .sounds-global-row,
+.discipline-actions,
 .tasks-summary div,
 .task-form,
+.discipline-day,
 .sounds-controls,
 .tasks-empty,
 .task-item,
@@ -1295,8 +1436,10 @@ select:focus-visible {
 
 .app-brand-title,
 .tasks-page-title,
+.discipline-page-title,
 .sounds-page-title,
 .tasks-section-title,
+.discipline-day-title,
 .current-level-name,
 .task-item-title,
 .marathon-card-title,
@@ -1318,9 +1461,11 @@ select:focus-visible {
 .sound-item-sub,
 .modal-subtitle,
 .tasks-page-subtitle,
+.discipline-page-subtitle,
 .sounds-page-subtitle,
 .tasks-section-note,
 .tasks-summary span,
+.discipline-day-summary,
 .level-item .meta span {
   color: var(--muted);
 }
@@ -1331,6 +1476,7 @@ select:focus-visible {
 .candle-timeframes,
 .comment-controls,
 .tasks-tab,
+.discipline-tab,
 .sounds-tab,
 .data-controls {
   padding: 7px;
@@ -1360,8 +1506,12 @@ select:focus-visible {
   top: 256px;
 }
 
-.sounds-tab {
+.discipline-tab {
   top: 304px;
+}
+
+.sounds-tab {
+  top: 352px;
 }
 
 .data-controls {
@@ -1413,6 +1563,7 @@ select:focus-visible {
 .candle-timeframes button,
 .comment-controls button,
 .tasks-tab button,
+.discipline-tab button,
 .sounds-tab button,
 .data-controls button,
 .auth-panel button,
@@ -1421,6 +1572,7 @@ select:focus-visible {
 .modal-actions button,
 .tasks-page-header button,
 .sounds-page-header button,
+.discipline-page-header button,
 .task-form button,
 .marathon-card button,
 .task-item-actions button,
@@ -1429,6 +1581,7 @@ select:focus-visible {
 .task-report-actions button,
 .sounds-controls button,
 .sound-item button,
+.discipline-actions button,
 .mobile-toolbar button {
   border: 1px solid var(--line-strong);
   border-radius: 8px;
@@ -1447,6 +1600,7 @@ select:focus-visible {
 }
 
 .tasks-tab button span,
+.discipline-tab button span,
 .sounds-tab button span {
   background: rgba(105, 230, 163, 0.2);
   color: #dfffea;
@@ -1513,7 +1667,8 @@ select:focus-visible {
 .task-report-actions button.danger,
 .modal-actions button.danger,
 .sound-item button,
-.level-item button {
+.level-item button,
+.discipline-actions button.danger {
   border-color: rgba(255, 111, 140, 0.56);
   background: rgba(255, 111, 140, 0.12);
 }
@@ -1524,6 +1679,7 @@ select:focus-visible {
 }
 
 .tasks-page,
+.discipline-page,
 .sounds-page {
   background:
     linear-gradient(135deg, rgba(9, 16, 15, 0.98), rgba(14, 24, 24, 0.98) 54%, rgba(24, 22, 14, 0.98));
@@ -1606,6 +1762,7 @@ select:focus-visible {
   body.is-app-ready .candle-timeframes,
   body.is-app-ready .comment-controls,
   body.is-app-ready .tasks-tab,
+  body.is-app-ready .discipline-tab,
   body.is-app-ready .sounds-tab,
   body.is-app-ready .data-controls,
   body.is-app-ready .auth-panel,
@@ -1619,6 +1776,7 @@ select:focus-visible {
   body.is-app-ready .candle-timeframes.mobile-open,
   body.is-app-ready .comment-controls.mobile-open,
   body.is-app-ready .tasks-tab.mobile-open,
+  body.is-app-ready .discipline-tab.mobile-open,
   body.is-app-ready .sounds-tab.mobile-open,
   body.is-app-ready .data-controls.mobile-open,
   body.is-app-ready .auth-panel.mobile-open,
@@ -1645,6 +1803,7 @@ select:focus-visible {
   body.is-app-ready .candle-timeframes.mobile-open,
   body.is-app-ready .comment-controls.mobile-open,
   body.is-app-ready .tasks-tab.mobile-open,
+  body.is-app-ready .discipline-tab.mobile-open,
   body.is-app-ready .sounds-tab.mobile-open,
   body.is-app-ready .data-controls.mobile-open,
   body.is-app-ready .auth-panel.mobile-open {
@@ -1663,6 +1822,7 @@ select:focus-visible {
   body.is-app-ready .candle-timeframes.mobile-open button,
   body.is-app-ready .comment-controls.mobile-open button,
   body.is-app-ready .tasks-tab.mobile-open button,
+  body.is-app-ready .discipline-tab.mobile-open button,
   body.is-app-ready .sounds-tab.mobile-open button,
   body.is-app-ready .data-controls.mobile-open button,
   body.is-app-ready .auth-panel.mobile-open button {
@@ -1728,11 +1888,13 @@ select:focus-visible {
   }
 
   .tasks-page,
+  .discipline-page,
   .sounds-page {
     padding: 14px 12px calc(92px + env(safe-area-inset-bottom));
   }
 
   .tasks-page-header,
+  .discipline-page-header,
   .sounds-page-header {
     position: sticky;
     top: 0;
@@ -1743,11 +1905,13 @@ select:focus-visible {
   }
 
   .tasks-page-title,
+  .discipline-page-title,
   .sounds-page-title {
     font-size: 20px;
   }
 
   .tasks-page-header button,
+  .discipline-page-header button,
   .sounds-page-header button,
   .task-form button {
     min-height: 44px;
@@ -1774,6 +1938,7 @@ select:focus-visible {
   }
 
   .task-item-head,
+  .discipline-day-head,
   .marathon-card-head,
   .marathon-task-row-head,
   .sound-item {
@@ -1800,6 +1965,16 @@ select:focus-visible {
   .sound-item button {
     width: 100%;
     min-height: 42px;
+  }
+
+  .discipline-hour {
+    grid-template-columns: 50px minmax(0, 1fr);
+    gap: 8px;
+    padding: 3px 4px;
+  }
+
+  .discipline-day-summary {
+    white-space: normal;
   }
 
   .modal-card {

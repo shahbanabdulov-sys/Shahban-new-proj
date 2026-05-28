@@ -12,10 +12,18 @@ const addCommentBtn = document.getElementById("addCommentBtn");
 const toggleCommentsBtn = document.getElementById("toggleCommentsBtn");
 const tasksTabNode = document.getElementById("tasksTab");
 const openTasksBtn = document.getElementById("openTasksBtn");
+const disciplineTabNode = document.getElementById("disciplineTab");
+const openDisciplineBtn = document.getElementById("openDisciplineBtn");
+const disciplineTabBadgeNode = document.getElementById("disciplineTabBadge");
 const soundsTabNode = document.getElementById("soundsTab");
 const openSoundsBtn = document.getElementById("openSoundsBtn");
 const tasksPageNode = document.getElementById("tasksPage");
 const closeTasksBtn = document.getElementById("closeTasksBtn");
+const disciplinePageNode = document.getElementById("disciplinePage");
+const closeDisciplineBtn = document.getElementById("closeDisciplineBtn");
+const disciplinePenaltyBtn = document.getElementById("disciplinePenaltyBtn");
+const disciplineTodaySummaryNode = document.getElementById("disciplineTodaySummary");
+const disciplineDaysNode = document.getElementById("disciplineDays");
 const soundsPageNode = document.getElementById("soundsPage");
 const closeSoundsBtn = document.getElementById("closeSoundsBtn");
 const tasksGlobalEnabledInput = document.getElementById("tasksGlobalEnabled");
@@ -88,6 +96,7 @@ const appPanelsForAuth = [
   candleTimeframesNode,
   commentControlsNode,
   tasksTabNode,
+  disciplineTabNode,
   soundsTabNode,
   dataControlsNode,
   levelsPanelNode,
@@ -156,6 +165,9 @@ let tasksGlobalEnabled = true;
 let taskReportQueue = [];
 let activeTaskReport = null;
 let lastTaskCheckAt = 0;
+let disciplineStartDate = getLocalDateKey();
+let disciplineDays = {};
+let lastDisciplineAutoKey = "";
 let soundsEnabled = false;
 let soundVolume = 0.65;
 let soundRecords = [];
@@ -192,6 +204,10 @@ const HISTORY_PAGE_LIMIT = 5000;
 const HISTORY_LOAD_MARGIN_MS = 2 * 60 * 1000;
 const HISTORY_UPSERT_CHUNK_SIZE = 500;
 const MOBILE_LAYOUT_MAX = 760;
+const DISCIPLINE_SLOTS_PER_HOUR = 3;
+const DISCIPLINE_HOURS_PER_DAY = 24;
+const DISCIPLINE_SLOT_COUNT = DISCIPLINE_SLOTS_PER_HOUR * DISCIPLINE_HOURS_PER_DAY;
+const DISCIPLINE_SLOT_MS = 20 * 60 * 1000;
 
 let saveInFlight = false;
 let pendingCloudSaveSnapshot = null;
@@ -611,6 +627,102 @@ function getScheduledTimestampForDateKey(time, dateKey) {
   return d.getTime();
 }
 
+function normalizeDisciplineCellState(value) {
+  return value === "green" || value === "red" || value === "gray" ? value : "";
+}
+
+function normalizeDisciplineDay(item) {
+  const cells = {};
+  const rawCells = item?.cells && typeof item.cells === "object" ? item.cells : {};
+  for (const [key, value] of Object.entries(rawCells)) {
+    const index = Math.floor(toSafeNumber(Number(key), NaN));
+    const state = normalizeDisciplineCellState(value);
+    if (Number.isInteger(index) && index >= 0 && index < DISCIPLINE_SLOT_COUNT && state) {
+      cells[index] = state;
+    }
+  }
+
+  const rawPenalties = Array.isArray(item?.penalties) ? item.penalties : [];
+  const penalties = rawPenalties
+    .map((penalty) => {
+      const t = toSafeNumber(Number(penalty?.t ?? penalty), NaN);
+      const hour = Math.max(0, Math.min(23, Math.floor(toSafeNumber(Number(penalty?.hour), Number.isFinite(t) ? new Date(t).getHours() : 0))));
+      return Number.isFinite(t) ? { t, hour } : null;
+    })
+    .filter(Boolean);
+
+  return { cells, penalties };
+}
+
+function normalizeDisciplineDays(source) {
+  const result = {};
+  const raw = source && typeof source === "object" ? source : {};
+  for (const [dateKey, value] of Object.entries(raw)) {
+    const normalizedDate = normalizeDateKey(dateKey);
+    if (normalizedDate) result[normalizedDate] = normalizeDisciplineDay(value);
+  }
+  return result;
+}
+
+function getDisciplineDay(dateKey, shouldCreate = false) {
+  const normalizedDate = normalizeDateKey(dateKey);
+  if (!normalizedDate) return { cells: {}, penalties: [] };
+  if (!disciplineDays[normalizedDate] && shouldCreate) {
+    disciplineDays[normalizedDate] = { cells: {}, penalties: [] };
+  }
+  return disciplineDays[normalizedDate] || { cells: {}, penalties: [] };
+}
+
+function getDisciplineDayStart(dateKey) {
+  const d = dateKeyToLocalDate(dateKey);
+  return d ? d.getTime() : NaN;
+}
+
+function isDisciplineSlotAutoGreen(dateKey, slotIndex, now = Date.now()) {
+  const start = getDisciplineDayStart(dateKey);
+  if (!Number.isFinite(start)) return false;
+  return start + (slotIndex + 1) * DISCIPLINE_SLOT_MS <= now;
+}
+
+function getDisciplineSlotState(dateKey, slotIndex, now = Date.now()) {
+  const day = getDisciplineDay(dateKey);
+  const override = normalizeDisciplineCellState(day.cells?.[slotIndex]);
+  if (override) return override;
+  return isDisciplineSlotAutoGreen(dateKey, slotIndex, now) ? "green" : "gray";
+}
+
+function getNextDisciplineCellState(currentState) {
+  if (currentState === "green") return "red";
+  if (currentState === "red") return "gray";
+  return "green";
+}
+
+function getDisciplineDayStats(dateKey, now = Date.now()) {
+  const day = getDisciplineDay(dateKey);
+  let green = 0;
+  let red = Array.isArray(day.penalties) ? day.penalties.length : 0;
+  for (let index = 0; index < DISCIPLINE_SLOT_COUNT; index += 1) {
+    const state = getDisciplineSlotState(dateKey, index, now);
+    if (state === "green") green += 1;
+    if (state === "red") red += 1;
+  }
+  return { green, red };
+}
+
+function getDisciplineDateKeys(now = Date.now()) {
+  const today = getLocalDateKey(now);
+  const start = normalizeDateKey(disciplineStartDate) || today;
+  const days = Math.max(0, diffDateKeys(today, start));
+  const keys = [];
+  for (let offset = 0; offset <= days; offset += 1) {
+    keys.push(addDaysToDateKey(start, offset));
+  }
+  for (const dateKey of Object.keys(disciplineDays)) {
+    if (normalizeDateKey(dateKey) && !keys.includes(dateKey)) keys.push(dateKey);
+  }
+  return keys.sort((a, b) => a.localeCompare(b));
+}
+
 function getMarathonEndDate(marathon) {
   return addDaysToDateKey(marathon.startDate, marathon.durationDays - 1);
 }
@@ -679,6 +791,8 @@ function getEmptySnapshot() {
     tasksGlobalEnabled: true,
     tasks: [],
     marathons: [],
+    disciplineStartDate: getLocalDateKey(now),
+    disciplineDays: {},
     soundsEnabled: false,
     soundVolume: 0.65,
     history: [{ t: now, y: 0 }],
@@ -704,6 +818,8 @@ function getStateSnapshot(source = null) {
     tasksGlobalEnabled: item.tasksGlobalEnabled !== false,
     tasks: Array.isArray(item.tasks) ? item.tasks : tasks,
     marathons: Array.isArray(item.marathons) ? item.marathons : marathons,
+    disciplineStartDate: normalizeDateKey(item.disciplineStartDate) || disciplineStartDate,
+    disciplineDays: normalizeDisciplineDays(item.disciplineDays || disciplineDays),
     soundsEnabled: item.soundsEnabled === true,
     soundVolume: Math.max(0, Math.min(1, toSafeNumber(Number(item.soundVolume), soundVolume))),
   };
@@ -743,6 +859,8 @@ function getFastSnapshot() {
     tasksGlobalEnabled,
     tasks,
     marathons,
+    disciplineStartDate,
+    disciplineDays,
     soundsEnabled,
     soundVolume,
     history,
@@ -796,6 +914,8 @@ function applySnapshot(parsed, options = {}) {
       .filter(Boolean)
       .sort((a, b) => a.startDate.localeCompare(b.startDate) || a.title.localeCompare(b.title))
     : [];
+  disciplineStartDate = normalizeDateKey(parsed.disciplineStartDate) || getLocalDateKey();
+  disciplineDays = normalizeDisciplineDays(parsed.disciplineDays);
   soundsEnabled = parsed.soundsEnabled === true;
   soundVolume = Math.max(0, Math.min(1, toSafeNumber(Number(parsed.soundVolume), 0.65)));
 
@@ -837,6 +957,7 @@ function applySnapshot(parsed, options = {}) {
   initLiveLine();
   renderLevelsUi();
   renderTasksUi();
+  renderDisciplineUi();
   renderSoundsUi();
   if (shouldUpdateSounds) updateSoundPlayback();
   return true;
@@ -869,6 +990,7 @@ function setAuthUiState() {
   if (!canUseApp) {
     closeMobilePanels();
     closeTasksPage();
+    closeDisciplinePage();
     closeSoundsPage();
     closeTaskReportModal();
     stopSoundLoop();
@@ -953,6 +1075,7 @@ function syncMobileToolbarButtons() {
     candleTimeframes: canUseApp && selectedMode === "view" && selectedViewType === "candles",
     commentControls: canUseApp && selectedMode === "view" && selectedViewType === "candles",
     tasksTab: canUseApp,
+    disciplineTab: canUseApp,
     soundsTab: canUseApp,
     levelsPanel: canUseApp,
     dataControls: canUseApp,
@@ -973,7 +1096,7 @@ function layoutControls() {
   syncResponsiveUi();
   if (isMobileLayout()) return;
   if (!isMobileLayout()) {
-    for (const node of [modesNode, timeframeNode, viewTypesNode, candleTimeframesNode, commentControlsNode, tasksTabNode, soundsTabNode, dataControlsNode, authPanelNode, levelsPanelNode].filter(Boolean)) {
+    for (const node of [modesNode, timeframeNode, viewTypesNode, candleTimeframesNode, commentControlsNode, tasksTabNode, disciplineTabNode, soundsTabNode, dataControlsNode, authPanelNode, levelsPanelNode].filter(Boolean)) {
       node.style.top = "";
     }
     return;
@@ -983,7 +1106,7 @@ function layoutControls() {
   const startTop = 10;
 
   let topLeft = startTop;
-  for (const node of [modesNode, timeframeNode, viewTypesNode, candleTimeframesNode, commentControlsNode, tasksTabNode, soundsTabNode]) {
+  for (const node of [modesNode, timeframeNode, viewTypesNode, candleTimeframesNode, commentControlsNode, tasksTabNode, disciplineTabNode, soundsTabNode]) {
     if (!node || node.classList.contains("hidden")) continue;
     node.style.top = `${topLeft}px`;
     topLeft += node.offsetHeight + gap;
@@ -1445,6 +1568,103 @@ function renderMarathonsUi() {
   }
 }
 
+function formatDisciplineHour(hour) {
+  return `${String(hour).padStart(2, "0")}:00`;
+}
+
+function renderDisciplineUi() {
+  const now = Date.now();
+  const today = getLocalDateKey(now);
+  if (!normalizeDateKey(disciplineStartDate)) disciplineStartDate = today;
+
+  const todayStats = getDisciplineDayStats(today, now);
+  if (disciplineTabBadgeNode) disciplineTabBadgeNode.textContent = String(todayStats.red);
+  if (disciplineTodaySummaryNode) {
+    disciplineTodaySummaryNode.textContent = `Сегодня: ${todayStats.green} зеленых / ${todayStats.red} красных`;
+  }
+  if (!disciplineDaysNode) return;
+
+  const dateKeys = getDisciplineDateKeys(now);
+  disciplineDaysNode.innerHTML = "";
+  for (const [dayIndex, dateKey] of dateKeys.entries()) {
+    const stats = getDisciplineDayStats(dateKey, now);
+    const card = document.createElement("section");
+    card.className = "discipline-day";
+    card.classList.toggle("today", dateKey === today);
+
+    const head = document.createElement("div");
+    head.className = "discipline-day-head";
+
+    const title = document.createElement("div");
+    title.className = "discipline-day-title";
+    title.textContent = `День ${dayIndex + 1} - ${formatDateKeyLong(dateKey)}`;
+
+    const summary = document.createElement("div");
+    summary.className = "discipline-day-summary";
+    summary.textContent = `${stats.green} зеленых / ${stats.red} красных`;
+
+    head.appendChild(title);
+    head.appendChild(summary);
+    card.appendChild(head);
+
+    const grid = document.createElement("div");
+    grid.className = "discipline-hours";
+
+    const day = getDisciplineDay(dateKey);
+    for (let hour = 0; hour < DISCIPLINE_HOURS_PER_DAY; hour += 1) {
+      const row = document.createElement("div");
+      row.className = "discipline-hour";
+      row.classList.toggle("current", dateKey === today && hour === new Date(now).getHours());
+
+      const label = document.createElement("div");
+      label.className = "discipline-hour-label";
+      label.textContent = formatDisciplineHour(hour);
+      row.appendChild(label);
+
+      const squares = document.createElement("div");
+      squares.className = "discipline-squares";
+      for (let segment = 0; segment < DISCIPLINE_SLOTS_PER_HOUR; segment += 1) {
+        const slotIndex = hour * DISCIPLINE_SLOTS_PER_HOUR + segment;
+        const state = getDisciplineSlotState(dateKey, slotIndex, now);
+        const square = document.createElement("button");
+        square.type = "button";
+        square.className = `discipline-square ${state}`;
+        square.dataset.dateKey = dateKey;
+        square.dataset.slotIndex = String(slotIndex);
+        square.setAttribute("aria-label", `${formatDisciplineHour(hour)} блок ${segment + 1}: ${state}`);
+        squares.appendChild(square);
+      }
+
+      const penalties = Array.isArray(day.penalties)
+        ? day.penalties.filter((penalty) => penalty.hour === hour)
+        : [];
+      for (let extraIndex = 0; extraIndex < penalties.length; extraIndex += 1) {
+        const square = document.createElement("span");
+        square.className = "discipline-square red penalty";
+        squares.appendChild(square);
+      }
+
+      row.appendChild(squares);
+      grid.appendChild(row);
+    }
+
+    card.appendChild(grid);
+    disciplineDaysNode.appendChild(card);
+  }
+}
+
+function updateDisciplineAutoProgress(now = Date.now()) {
+  const today = getLocalDateKey(now);
+  const start = getDisciplineDayStart(today);
+  const slot = Number.isFinite(start)
+    ? Math.max(0, Math.min(DISCIPLINE_SLOT_COUNT, Math.floor((now - start) / DISCIPLINE_SLOT_MS)))
+    : 0;
+  const autoKey = `${today}:${slot}`;
+  if (autoKey === lastDisciplineAutoKey) return;
+  lastDisciplineAutoKey = autoKey;
+  renderDisciplineUi();
+}
+
 function renderTasksUi() {
   if (tasksGlobalEnabledInput) tasksGlobalEnabledInput.checked = tasksGlobalEnabled;
   const activeCount = getActiveTaskCount();
@@ -1555,6 +1775,16 @@ function openTasksPage() {
 
 function closeTasksPage() {
   tasksPageNode?.classList.add("hidden");
+}
+
+function openDisciplinePage() {
+  closeMobilePanels();
+  renderDisciplineUi();
+  disciplinePageNode?.classList.remove("hidden");
+}
+
+function closeDisciplinePage() {
+  disciplinePageNode?.classList.add("hidden");
 }
 
 function openSoundsPage() {
@@ -2064,7 +2294,7 @@ function findCandleByScreenX(screenX) {
 function closeMobilePanels() {
   document.body.classList.remove("is-mobile-panel-open");
   if (mobileOverlayNode) mobileOverlayNode.classList.add("hidden");
-  for (const node of [modesNode, timeframeNode, viewTypesNode, candleTimeframesNode, commentControlsNode, tasksTabNode, soundsTabNode, dataControlsNode, authPanelNode, levelsPanelNode]) {
+  for (const node of [modesNode, timeframeNode, viewTypesNode, candleTimeframesNode, commentControlsNode, tasksTabNode, disciplineTabNode, soundsTabNode, dataControlsNode, authPanelNode, levelsPanelNode]) {
     node?.classList.remove("mobile-open");
   }
 }
@@ -2078,6 +2308,7 @@ function openMobilePanel(id) {
     candleTimeframes: candleTimeframesNode,
     commentControls: commentControlsNode,
     tasksTab: tasksTabNode,
+    disciplineTab: disciplineTabNode,
     soundsTab: soundsTabNode,
     dataControls: dataControlsNode,
     authPanel: authPanelNode,
@@ -2573,6 +2804,7 @@ function frame(now) {
     pendingVerticalDelta = 0;
   }
   checkDueTasks();
+  updateDisciplineAutoProgress(Date.now());
   addHistoryPoint(Date.now());
   if (currentUser && isProgressLoaded && now - lastFastSaveAt >= FAST_SAVE_MS && currentValue !== lastFastSavedValue) {
     saveFastProgressForCurrentUser();
@@ -2849,8 +3081,33 @@ toggleCommentsBtn.addEventListener("click", () => {
 
 openTasksBtn?.addEventListener("click", openTasksPage);
 closeTasksBtn?.addEventListener("click", closeTasksPage);
+openDisciplineBtn?.addEventListener("click", openDisciplinePage);
+closeDisciplineBtn?.addEventListener("click", closeDisciplinePage);
 openSoundsBtn?.addEventListener("click", openSoundsPage);
 closeSoundsBtn?.addEventListener("click", closeSoundsPage);
+
+disciplinePenaltyBtn?.addEventListener("click", () => {
+  const now = Date.now();
+  const today = getLocalDateKey(now);
+  const day = getDisciplineDay(today, true);
+  day.penalties.push({ t: now, hour: new Date(now).getHours() });
+  saveProgressForCurrentUser();
+  renderDisciplineUi();
+});
+
+disciplineDaysNode?.addEventListener("click", (event) => {
+  const square = event.target.closest(".discipline-square[data-date-key][data-slot-index]");
+  if (!square) return;
+  const dateKey = normalizeDateKey(square.dataset.dateKey);
+  const slotIndex = Math.floor(toSafeNumber(Number(square.dataset.slotIndex), NaN));
+  if (!dateKey || !Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= DISCIPLINE_SLOT_COUNT) return;
+  const currentState = getDisciplineSlotState(dateKey, slotIndex);
+  const nextState = getNextDisciplineCellState(currentState);
+  const day = getDisciplineDay(dateKey, true);
+  day.cells[slotIndex] = nextState;
+  saveProgressForCurrentUser();
+  renderDisciplineUi();
+});
 
 tasksGlobalEnabledInput?.addEventListener("change", () => {
   tasksGlobalEnabled = tasksGlobalEnabledInput.checked;
@@ -3164,6 +3421,7 @@ addHistoryPoint(Date.now());
 layoutControls();
 renderLevelsUi();
 renderTasksUi();
+renderDisciplineUi();
 renderSoundsUi();
 if (location.protocol.startsWith("http")) {
   setShareLink(`Ссылка: ${location.origin}/`);

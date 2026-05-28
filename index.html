@@ -23,6 +23,7 @@
     <button type="button" data-mobile-open="candleTimeframes" aria-label="Выбрать период свечей">Свечи</button>
     <button type="button" data-mobile-open="commentControls" aria-label="Комментарии к свечам">Коммент.</button>
     <button type="button" data-mobile-open="tasksTab" aria-label="Открыть задания">Задания</button>
+    <button type="button" data-mobile-open="disciplineTab" aria-label="Открыть дисциплину">Дисциплина</button>
     <button type="button" data-mobile-open="soundsTab" aria-label="Открыть звуки">Звуки</button>
     <button type="button" data-mobile-open="levelsPanel" aria-label="Настроить уровни">Уровни</button>
     <button type="button" data-mobile-open="dataControls" aria-label="Ссылка на сайт">Ссылка</button>
@@ -63,6 +64,10 @@
   </div>
   <div class="tasks-tab hidden" id="tasksTab">
     <button id="openTasksBtn" type="button">Задания <span id="tasksTabBadge">0</span></button>
+  </div>
+
+  <div class="discipline-tab hidden" id="disciplineTab">
+    <button id="openDisciplineBtn" type="button">Дисциплина <span id="disciplineTabBadge">0</span></button>
   </div>
 
   <div class="sounds-tab hidden" id="soundsTab">
@@ -143,6 +148,19 @@
       <button type="submit">Добавить марафон</button>
     </form>
     <div class="marathons-list" id="marathonsList"></div>
+  </section>
+  <section class="discipline-page hidden" id="disciplinePage">
+    <div class="discipline-page-header">
+      <div>
+        <div class="discipline-page-title">Дисциплина</div>
+        <div class="discipline-page-subtitle" id="disciplineTodaySummary">Сегодня: 0 зеленых / 0 красных</div>
+      </div>
+      <button id="closeDisciplineBtn" type="button">Закрыть</button>
+    </div>
+    <div class="discipline-actions">
+      <button id="disciplinePenaltyBtn" type="button" class="danger">Горе тебе</button>
+    </div>
+    <div class="discipline-days" id="disciplineDays"></div>
   </section>
   <section class="sounds-page hidden" id="soundsPage">
     <div class="sounds-page-header">
