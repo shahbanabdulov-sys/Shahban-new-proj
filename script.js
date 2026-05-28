@@ -167,6 +167,8 @@ let activeTaskReport = null;
 let lastTaskCheckAt = 0;
 let disciplineStartDate = getLocalDateKey();
 let disciplineDays = {};
+let disciplineSavedAt = 0;
+let pendingDisciplineCloudSave = false;
 let lastDisciplineAutoKey = "";
 let soundsEnabled = false;
 let soundVolume = 0.65;
@@ -195,6 +197,7 @@ const AUTOSAVE_MS = 1500;
 const FAST_SAVE_MS = 250;
 const LOCAL_PROGRESS_PREFIX = "productiv-line-progress:";
 const LOCAL_FAST_PROGRESS_PREFIX = "productiv-line-fast:";
+const LOCAL_DISCIPLINE_PREFIX = "productiv-line-discipline:";
 const SOUND_DB_NAME = "productiv-line-sounds";
 const SOUND_STORE_NAME = "sounds";
 const SUPABASE_AUTH_STORAGE_KEY = "productiv-line-auth";
@@ -272,6 +275,10 @@ function getLocalProgressKey(userId) {
 
 function getLocalFastProgressKey(userId) {
   return `${LOCAL_FAST_PROGRESS_PREFIX}${userId}`;
+}
+
+function getLocalDisciplineKey(userId = null) {
+  return `${LOCAL_DISCIPLINE_PREFIX}${userId || "guest"}`;
 }
 
 function getSnapshotSavedAt(snapshot) {
@@ -664,6 +671,53 @@ function normalizeDisciplineDays(source) {
   return result;
 }
 
+function readLocalDisciplineForUser(userId = null) {
+  try {
+    const raw = localStorage.getItem(getLocalDisciplineKey(userId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return {
+      savedAt: Math.max(0, toSafeNumber(Number(parsed.savedAt), 0)),
+      disciplineStartDate: normalizeDateKey(parsed.disciplineStartDate) || getLocalDateKey(),
+      disciplineDays: normalizeDisciplineDays(parsed.disciplineDays),
+    };
+  } catch (error) {
+    console.warn("readLocalDisciplineForUser error:", error);
+    return null;
+  }
+}
+
+function writeLocalDisciplineForUser(userId = null, snapshot = null) {
+  try {
+    const payload = snapshot || {
+      savedAt: disciplineSavedAt || Date.now(),
+      disciplineStartDate,
+      disciplineDays,
+    };
+    localStorage.setItem(getLocalDisciplineKey(userId), JSON.stringify({
+      savedAt: Math.max(0, toSafeNumber(Number(payload.savedAt), Date.now())),
+      disciplineStartDate: normalizeDateKey(payload.disciplineStartDate) || getLocalDateKey(),
+      disciplineDays: normalizeDisciplineDays(payload.disciplineDays),
+    }));
+  } catch (error) {
+    console.warn("writeLocalDisciplineForUser error:", error);
+  }
+}
+
+function writeLocalDisciplineForCurrentUser() {
+  writeLocalDisciplineForUser(currentUser?.id || null);
+}
+
+function applyLocalDisciplineIfNewer(userId = null) {
+  const local = readLocalDisciplineForUser(userId);
+  if (!local || local.savedAt < disciplineSavedAt) return false;
+  disciplineStartDate = local.disciplineStartDate;
+  disciplineDays = local.disciplineDays;
+  disciplineSavedAt = local.savedAt;
+  return true;
+}
+
 function getDisciplineDay(dateKey, shouldCreate = false) {
   const normalizedDate = normalizeDateKey(dateKey);
   if (!normalizedDate) return { cells: {}, penalties: [] };
@@ -793,6 +847,7 @@ function getEmptySnapshot() {
     marathons: [],
     disciplineStartDate: getLocalDateKey(now),
     disciplineDays: {},
+    disciplineSavedAt: now,
     soundsEnabled: false,
     soundVolume: 0.65,
     history: [{ t: now, y: 0 }],
@@ -801,6 +856,9 @@ function getEmptySnapshot() {
 
 function getStateSnapshot(source = null) {
   const item = source && typeof source === "object" ? source : {};
+  const itemHasDiscipline = Object.prototype.hasOwnProperty.call(item, "disciplineDays") ||
+    Object.prototype.hasOwnProperty.call(item, "disciplineStartDate") ||
+    Object.prototype.hasOwnProperty.call(item, "disciplineSavedAt");
   return {
     version: item.version || 1,
     savedAt: item.savedAt || Date.now(),
@@ -820,6 +878,7 @@ function getStateSnapshot(source = null) {
     marathons: Array.isArray(item.marathons) ? item.marathons : marathons,
     disciplineStartDate: normalizeDateKey(item.disciplineStartDate) || disciplineStartDate,
     disciplineDays: normalizeDisciplineDays(item.disciplineDays || disciplineDays),
+    disciplineSavedAt: Math.max(0, toSafeNumber(Number(item.disciplineSavedAt ?? (itemHasDiscipline ? item.savedAt : disciplineSavedAt)), disciplineSavedAt)),
     soundsEnabled: item.soundsEnabled === true,
     soundVolume: Math.max(0, Math.min(1, toSafeNumber(Number(item.soundVolume), soundVolume))),
   };
@@ -861,6 +920,7 @@ function getFastSnapshot() {
     marathons,
     disciplineStartDate,
     disciplineDays,
+    disciplineSavedAt,
     soundsEnabled,
     soundVolume,
     history,
@@ -914,8 +974,15 @@ function applySnapshot(parsed, options = {}) {
       .filter(Boolean)
       .sort((a, b) => a.startDate.localeCompare(b.startDate) || a.title.localeCompare(b.title))
     : [];
+  const parsedHasDiscipline = Object.prototype.hasOwnProperty.call(parsed || {}, "disciplineDays") ||
+    Object.prototype.hasOwnProperty.call(parsed || {}, "disciplineStartDate") ||
+    Object.prototype.hasOwnProperty.call(parsed || {}, "disciplineSavedAt");
   disciplineStartDate = normalizeDateKey(parsed.disciplineStartDate) || getLocalDateKey();
   disciplineDays = normalizeDisciplineDays(parsed.disciplineDays);
+  disciplineSavedAt = Math.max(0, toSafeNumber(Number(parsed.disciplineSavedAt ?? (parsedHasDiscipline ? parsed.savedAt : 0)), 0));
+  if (applyLocalDisciplineIfNewer(currentUser?.id || null) && currentUser?.id) {
+    pendingDisciplineCloudSave = true;
+  }
   soundsEnabled = parsed.soundsEnabled === true;
   soundVolume = Math.max(0, Math.min(1, toSafeNumber(Number(parsed.soundVolume), 0.65)));
 
@@ -1666,8 +1733,19 @@ function updateDisciplineAutoProgress(now = Date.now()) {
 }
 
 function saveDisciplineProgress() {
-  const snapshot = saveFastProgressForCurrentUser();
-  saveProgressForCurrentUser(snapshot || undefined);
+  disciplineSavedAt = Date.now();
+  writeLocalDisciplineForCurrentUser();
+  const snapshot = saveLocalProgressForCurrentUser() || saveFastProgressForCurrentUser();
+  if (currentUser?.id) pendingDisciplineCloudSave = true;
+  flushPendingDisciplineCloudSave(snapshot || getFastSnapshot());
+}
+
+function flushPendingDisciplineCloudSave(snapshot = null) {
+  if (!pendingDisciplineCloudSave) return;
+  if (!currentUser?.id || !isProgressLoaded || !isCloudProgressReconciled || isApplyingRemoteProgress) return;
+  const nextSnapshot = snapshot || saveLocalProgressForCurrentUser() || getSnapshot();
+  pendingDisciplineCloudSave = false;
+  saveProgressForCurrentUser(nextSnapshot);
 }
 
 function renderTasksUi() {
@@ -3531,6 +3609,7 @@ async function loadCurrentUserData(session = null) {
     isProgressLoaded = true;
     isCloudProgressReconciled = true;
     authStatusOverride = "";
+    flushPendingDisciplineCloudSave();
     const supabaseHasEmbeddedHistory = Object.prototype.hasOwnProperty.call(supabaseSnapshot || {}, "history");
     if (embeddedHistory.length > 0) queueHistoryPointsForCloud(embeddedHistory);
     if (newestSnapshot && (
