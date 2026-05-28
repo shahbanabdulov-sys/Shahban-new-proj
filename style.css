@@ -1693,6 +1693,27 @@ select:focus-visible {
   background: var(--panel-strong);
 }
 
+@media (min-width: 761px) {
+  .tasks-tab,
+  .discipline-tab,
+  .sounds-tab {
+    top: 256px;
+    transform: translateX(-50%);
+  }
+
+  .tasks-tab {
+    left: calc(50% - 170px);
+  }
+
+  .discipline-tab {
+    left: 50%;
+  }
+
+  .sounds-tab {
+    left: calc(50% + 170px);
+  }
+}
+
 @media (max-width: 760px) {
   html,
   body {

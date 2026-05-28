@@ -84,12 +84,23 @@
     top: 266px;
   }
 
-  .site-page-main .tasks-tab {
+  .site-page-main .tasks-tab,
+  .site-page-main .discipline-tab,
+  .site-page-main .sounds-tab {
     top: 314px;
+    transform: translateX(-50%);
+  }
+
+  .site-page-main .tasks-tab {
+    left: calc(50% - 170px);
+  }
+
+  .site-page-main .discipline-tab {
+    left: 50%;
   }
 
   .site-page-main .sounds-tab {
-    top: 362px;
+    left: calc(50% + 170px);
   }
 
   .site-page-main .data-controls {

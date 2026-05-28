@@ -1665,6 +1665,11 @@ function updateDisciplineAutoProgress(now = Date.now()) {
   renderDisciplineUi();
 }
 
+function saveDisciplineProgress() {
+  const snapshot = saveFastProgressForCurrentUser();
+  saveProgressForCurrentUser(snapshot || undefined);
+}
+
 function renderTasksUi() {
   if (tasksGlobalEnabledInput) tasksGlobalEnabledInput.checked = tasksGlobalEnabled;
   const activeCount = getActiveTaskCount();
@@ -3091,7 +3096,7 @@ disciplinePenaltyBtn?.addEventListener("click", () => {
   const today = getLocalDateKey(now);
   const day = getDisciplineDay(today, true);
   day.penalties.push({ t: now, hour: new Date(now).getHours() });
-  saveProgressForCurrentUser();
+  saveDisciplineProgress();
   renderDisciplineUi();
 });
 
@@ -3105,7 +3110,7 @@ disciplineDaysNode?.addEventListener("click", (event) => {
   const nextState = getNextDisciplineCellState(currentState);
   const day = getDisciplineDay(dateKey, true);
   day.cells[slotIndex] = nextState;
-  saveProgressForCurrentUser();
+  saveDisciplineProgress();
   renderDisciplineUi();
 });
 
