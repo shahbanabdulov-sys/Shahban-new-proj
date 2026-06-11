@@ -923,7 +923,7 @@ body {
   padding: 0;
   border: 1px solid rgba(236, 246, 239, 0.15);
   border-radius: 3px;
-  background: rgba(133, 148, 143, 0.42);
+  background: rgba(0, 0, 0, 0.82);
   box-shadow: none;
 }
 
@@ -939,6 +939,10 @@ button.discipline-square:active {
 .discipline-square.green {
   border-color: rgba(105, 230, 163, 0.7);
   background: rgba(105, 230, 163, 0.86);
+}
+
+.discipline-square.gray {
+  background: rgba(0, 0, 0, 0.82);
 }
 
 .discipline-square.red {
@@ -2012,5 +2016,516 @@ select:focus-visible {
 
   .modal-actions button {
     min-height: 44px;
+  }
+}
+
+/* Tasks workspace refresh */
+.tasks-page {
+  padding: clamp(16px, 3vw, 34px);
+  background:
+    radial-gradient(circle at 18% 0%, rgba(105, 230, 163, 0.16), transparent 30%),
+    radial-gradient(circle at 86% 12%, rgba(242, 201, 109, 0.13), transparent 30%),
+    linear-gradient(135deg, rgba(7, 12, 12, 0.98), rgba(12, 23, 22, 0.98) 52%, rgba(22, 21, 13, 0.98));
+}
+
+.tasks-workspace {
+  width: min(1180px, calc(100vw - 28px));
+  margin: 0 auto;
+  display: grid;
+  gap: 16px;
+}
+
+.tasks-page .tasks-page-header {
+  max-width: none;
+  margin: 0;
+  padding: clamp(18px, 3vw, 30px);
+  border: 1px solid rgba(105, 230, 163, 0.24);
+  border-radius: 26px;
+  background:
+    linear-gradient(135deg, rgba(25, 49, 42, 0.9), rgba(12, 22, 21, 0.92)),
+    radial-gradient(circle at 92% 12%, rgba(242, 201, 109, 0.16), transparent 24%);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.34);
+}
+
+.tasks-page-kicker,
+.tasks-section-kicker,
+.task-report-kicker {
+  color: var(--accent-2);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.tasks-page .tasks-page-title {
+  margin-top: 4px;
+  font-size: clamp(30px, 5vw, 48px);
+  line-height: 1.02;
+}
+
+.tasks-page .tasks-page-subtitle {
+  max-width: 620px;
+  margin-top: 8px;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.tasks-close-button {
+  align-self: flex-start;
+  min-width: 108px;
+}
+
+.tasks-overview {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.92fr) minmax(0, 1.4fr);
+  gap: 14px;
+}
+
+.tasks-page .tasks-global-row,
+.tasks-page .tasks-summary,
+.tasks-page .tasks-section-heading,
+.tasks-page .task-form,
+.tasks-page .tasks-list,
+.tasks-page .marathons-list {
+  max-width: none;
+  margin: 0;
+}
+
+.tasks-page .tasks-global-row {
+  min-height: 100%;
+  padding: 18px;
+  border-radius: 22px;
+  background: linear-gradient(135deg, rgba(15, 31, 29, 0.92), rgba(8, 17, 16, 0.88));
+}
+
+.tasks-page .tasks-global-row > div {
+  display: grid;
+  gap: 4px;
+}
+
+.tasks-page .tasks-global-row strong {
+  color: var(--text);
+  font-size: 15px;
+}
+
+.tasks-page .tasks-global-row span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.tasks-page .tasks-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.tasks-stat-card {
+  min-height: 112px;
+  padding: 16px;
+  border: 1px solid rgba(145, 173, 160, 0.24);
+  border-radius: 22px;
+  background: linear-gradient(145deg, rgba(14, 29, 28, 0.94), rgba(7, 15, 14, 0.88));
+  box-shadow: var(--shadow);
+  display: grid;
+  align-content: space-between;
+  gap: 12px;
+}
+
+.tasks-stat-card span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.tasks-stat-card strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: clamp(24px, 4vw, 34px);
+  line-height: 1.05;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tasks-stat-card.is-attention strong {
+  color: #ffd2db;
+}
+
+.tasks-stat-card.is-next strong {
+  font-size: clamp(17px, 2.3vw, 24px);
+}
+
+.tasks-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.tasks-panel {
+  padding: clamp(16px, 2.2vw, 22px);
+  border: 1px solid rgba(145, 173, 160, 0.22);
+  border-radius: 26px;
+  background: linear-gradient(145deg, rgba(11, 23, 22, 0.94), rgba(7, 14, 14, 0.9));
+  box-shadow: var(--shadow);
+}
+
+.tasks-page .tasks-section-heading {
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.tasks-page .tasks-section-title {
+  margin-top: 2px;
+  font-size: 21px;
+}
+
+.tasks-section-count {
+  display: inline-flex;
+  min-width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(105, 230, 163, 0.32);
+  border-radius: 999px;
+  background: rgba(105, 230, 163, 0.1);
+  color: var(--accent);
+  font-weight: 900;
+}
+
+.tasks-page .task-creator {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 14px;
+  border-radius: 20px;
+  background: rgba(4, 10, 10, 0.46);
+}
+
+.task-field {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.task-field input,
+.task-field textarea,
+.task-field select {
+  width: 100%;
+  min-width: 0;
+  padding: 11px 12px;
+  border-radius: 12px;
+  font: inherit;
+}
+
+.task-field textarea {
+  resize: vertical;
+}
+
+.task-field select {
+  appearance: none;
+}
+
+.tasks-page .task-form-grid,
+.tasks-page .marathon-form-grid,
+.marathon-task-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tasks-page .marathon-form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.task-primary-button {
+  min-height: 44px;
+  border-color: rgba(105, 230, 163, 0.56);
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(105, 230, 163, 0.24), rgba(242, 201, 109, 0.16));
+  color: var(--text);
+  font-weight: 900;
+}
+
+.tasks-page .tasks-list,
+.tasks-page .marathons-list,
+.marathon-result-list,
+.marathon-task-list {
+  display: grid;
+  gap: 10px;
+}
+
+.tasks-page .tasks-empty,
+.tasks-page .marathons-empty,
+.tasks-page .marathon-task-empty,
+.marathon-result-empty,
+.marathon-result-item,
+.tasks-page .task-item,
+.tasks-page .marathon-card,
+.tasks-page .marathon-task-row {
+  border: 1px solid rgba(145, 173, 160, 0.2);
+  border-radius: 18px;
+  background: rgba(12, 24, 23, 0.74);
+}
+
+.tasks-page .tasks-empty,
+.tasks-page .marathons-empty,
+.tasks-page .marathon-task-empty,
+.marathon-result-empty {
+  padding: 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.tasks-page .task-item,
+.tasks-page .marathon-card {
+  position: relative;
+  overflow: hidden;
+  padding: 15px;
+}
+
+.tasks-page .task-item::before,
+.tasks-page .marathon-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: linear-gradient(var(--accent), var(--accent-2));
+  opacity: 0.84;
+}
+
+.tasks-page .task-item.disabled,
+.tasks-page .marathon-card.disabled,
+.tasks-page .marathon-task-row.disabled {
+  opacity: 0.58;
+}
+
+.task-item-head,
+.marathon-card-head,
+.marathon-task-row-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.tasks-page .task-item-title,
+.tasks-page .marathon-card-title,
+.tasks-page .marathon-task-title {
+  font-size: 15px;
+}
+
+.tasks-page .task-item-sub,
+.tasks-page .marathon-card-sub,
+.tasks-page .marathon-task-sub {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.tasks-page .task-item-actions,
+.tasks-page .marathon-card-actions,
+.tasks-page .marathon-task-actions {
+  margin-top: 10px;
+}
+
+.tasks-page .task-item-actions button,
+.tasks-page .marathon-card-actions button,
+.tasks-page .marathon-task-actions button {
+  border-radius: 12px;
+}
+
+.tasks-page .marathon-card-progress {
+  height: 8px;
+  margin: 12px 0 2px;
+  background: rgba(145, 173, 160, 0.16);
+}
+
+.tasks-page .marathon-task-form {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px dashed rgba(145, 173, 160, 0.24);
+  border-radius: 18px;
+  background: rgba(5, 12, 12, 0.48);
+}
+
+.tasks-page .marathon-task-options {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.7fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.tasks-page .marathon-task-repeat {
+  border-radius: 12px;
+}
+
+.marathon-results-panel {
+  margin-bottom: 28px;
+}
+
+.marathon-results-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.marathon-result-column {
+  min-height: 150px;
+  padding: 14px;
+  border: 1px solid rgba(145, 173, 160, 0.2);
+  border-radius: 20px;
+  background: rgba(4, 10, 10, 0.42);
+}
+
+.marathon-result-column.is-complete {
+  border-color: rgba(105, 230, 163, 0.28);
+}
+
+.marathon-result-column.is-failed {
+  border-color: rgba(255, 111, 140, 0.28);
+}
+
+.marathon-result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  color: var(--text);
+  font-weight: 900;
+}
+
+.marathon-result-header strong {
+  display: inline-flex;
+  min-width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(145, 173, 160, 0.13);
+}
+
+.marathon-result-item {
+  padding: 11px 12px;
+}
+
+.marathon-result-title {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.marathon-result-meta {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.task-report-card {
+  width: min(500px, calc(100vw - 24px));
+}
+
+.task-report-topbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.task-delete-button {
+  display: inline-flex;
+  width: 42px;
+  height: 42px;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 111, 140, 0.54);
+  border-radius: 14px;
+  background: rgba(255, 111, 140, 0.12);
+  color: #ffd2db;
+  cursor: pointer;
+}
+
+.task-delete-button svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.task-report-actions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.task-report-actions button {
+  min-height: 44px;
+  border-radius: 14px;
+  font-weight: 900;
+}
+
+.discipline-square,
+.discipline-square.gray {
+  border-color: rgba(164, 178, 171, 0.34);
+  background: linear-gradient(145deg, rgba(92, 105, 99, 0.84), rgba(52, 63, 59, 0.86));
+}
+
+.discipline-square.green {
+  border-color: rgba(105, 230, 163, 0.7);
+  background: rgba(105, 230, 163, 0.86);
+}
+
+@media (max-width: 960px) {
+  .tasks-overview,
+  .tasks-layout,
+  .marathon-results-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .tasks-page .tasks-summary,
+  .tasks-page .task-form-grid,
+  .tasks-page .marathon-form-grid,
+  .tasks-page .marathon-task-options,
+  .marathon-task-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .tasks-page {
+    padding: 12px 10px calc(88px + env(safe-area-inset-bottom));
+  }
+
+  .tasks-workspace {
+    width: 100%;
+    gap: 12px;
+  }
+
+  .tasks-page .tasks-page-header,
+  .tasks-panel,
+  .tasks-page .tasks-global-row,
+  .tasks-stat-card {
+    border-radius: 18px;
+  }
+
+  .tasks-page .tasks-page-header {
+    align-items: stretch;
+  }
+
+  .tasks-close-button {
+    width: 100%;
+  }
+
+  .task-item-head,
+  .marathon-card-head,
+  .marathon-task-row-head,
+  .tasks-page .tasks-section-heading {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
