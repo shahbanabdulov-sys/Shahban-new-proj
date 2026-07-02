@@ -3,7 +3,7 @@ const ctx = canvas.getContext("2d");
 const appBrandNode = document.getElementById("appBrand");
 const valueYNode = document.getElementById("valueY");
 const deltaYNode = document.getElementById("deltaY");
-const clockNode = document.getElementById("clock");
+const upcomingTasksHudNode = document.getElementById("upcomingTasksHud");
 const dailyBlocksAppNode = document.getElementById("dailyBlocksApp");
 const openBlocksFromSplitBtn = document.getElementById("openBlocksFromSplit");
 const openLineFromSplitBtn = document.getElementById("openLineFromSplit");
@@ -191,6 +191,8 @@ let tasksGlobalEnabled = true;
 let taskReportQueue = [];
 let activeTaskReport = null;
 let lastTaskCheckAt = 0;
+let lastUpcomingTasksHudAt = 0;
+let lastUpcomingTasksHudSignature = "";
 let disciplineStartDate = DISCIPLINE_START_DATE;
 let disciplineDays = {};
 let disciplineSavedAt = 0;
@@ -2320,6 +2322,7 @@ function renderTasksUi() {
   }
   renderMarathonsUi();
   renderMarathonResultsUi();
+  renderUpcomingTasksHud(true);
 }
 
 function getNextPendingTask(now = Date.now()) {
@@ -2333,6 +2336,79 @@ function getNextPendingTask(now = Date.now()) {
     return list.find((occurrence) => occurrence.scheduledAt >= now) || list[0];
   }
   return null;
+}
+
+function getUpcomingTasks(limit = 5, now = Date.now()) {
+  if (!tasksGlobalEnabled || limit <= 0) return [];
+  const today = getLocalDateKey(now);
+  const result = [];
+  for (let dayOffset = 0; dayOffset <= 366 && result.length < limit; dayOffset += 1) {
+    const dateKey = addDaysToDateKey(today, dayOffset);
+    const list = getTaskOccurrencesForDate(dateKey)
+      .filter((occurrence) => occurrence.scheduledAt > now)
+      .sort((a, b) => a.scheduledAt - b.scheduledAt);
+    for (const occurrence of list) {
+      result.push(occurrence);
+      if (result.length >= limit) break;
+    }
+  }
+  return result;
+}
+
+function formatUpcomingTaskTime(occurrence, now = Date.now()) {
+  const today = getLocalDateKey(now);
+  const tomorrow = addDaysToDateKey(today, 1);
+  if (occurrence.dateKey === today) return occurrence.time;
+  if (occurrence.dateKey === tomorrow) return `Завтра ${occurrence.time}`;
+  return `${formatDateKeyShort(occurrence.dateKey)} ${occurrence.time}`;
+}
+
+function renderUpcomingTasksHud(force = false) {
+  if (!upcomingTasksHudNode) return;
+  const now = Date.now();
+  if (!force && now - lastUpcomingTasksHudAt < 10000) return;
+  lastUpcomingTasksHudAt = now;
+
+  const upcoming = getUpcomingTasks(5, now);
+  const signature = upcoming.map((item) => `${item.source}:${item.taskId}:${item.marathonId || ""}:${item.dateKey}:${item.time}`).join("|");
+  if (!force && signature === lastUpcomingTasksHudSignature) return;
+  lastUpcomingTasksHudSignature = signature;
+
+  upcomingTasksHudNode.innerHTML = "";
+  const title = document.createElement("div");
+  title.className = "upcoming-tasks-title";
+  title.textContent = "Ближайшие задачи";
+  upcomingTasksHudNode.appendChild(title);
+
+  if (upcoming.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "upcoming-task-empty";
+    empty.textContent = "Будущих задач нет";
+    upcomingTasksHudNode.appendChild(empty);
+    return;
+  }
+
+  const list = document.createElement("div");
+  list.className = "upcoming-task-list";
+  for (const occurrence of upcoming) {
+    const item = document.createElement("div");
+    item.className = "upcoming-task-item";
+
+    const time = document.createElement("span");
+    time.className = "upcoming-task-time";
+    time.textContent = formatUpcomingTaskTime(occurrence, now);
+
+    const name = document.createElement("strong");
+    name.className = "upcoming-task-name";
+    name.textContent = occurrence.source === "marathon"
+      ? `${occurrence.marathonTitle}: ${occurrence.title}`
+      : occurrence.title;
+
+    item.appendChild(time);
+    item.appendChild(name);
+    list.appendChild(item);
+  }
+  upcomingTasksHudNode.appendChild(list);
 }
 
 function setAppView(view, options = {}) {
@@ -2844,7 +2920,7 @@ function updateHud() {
   const previousDisplay = toDisplayValue(previousValue);
   if (valueYNode) valueYNode.textContent = currentDisplay.toFixed(2);
   if (deltaYNode) deltaYNode.textContent = formatSigned(currentDisplay - previousDisplay);
-  if (clockNode) clockNode.textContent = formatClock(new Date());
+  renderUpcomingTasksHud(false);
   if (selectedMode === "view" && selectedViewType === "candles") {
     const candleMs = candleRangeMap[selectedCandleRange];
     const now = Date.now();
