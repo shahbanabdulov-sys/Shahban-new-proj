@@ -5,14 +5,61 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Productiv Line</title>
   <link rel="stylesheet" href="style.css">
-  <link rel="stylesheet" href="site-nav.css">
 </head>
-<body class="site-page-main">
-  <nav class="site-switcher" aria-label="Site switcher">
-    <a class="site-switcher__link" href="index.html#line" data-app-tab="line" aria-current="page">Productiv Line</a>
-    <a class="site-switcher__link" href="index.html#tracker" data-app-tab="tracker">Tracker</a>
-  </nav>
-  <main id="productivApp" class="productiv-app-tab">
+<body class="app-view-split">
+  <main id="productivApp">
+  <section class="daily-blocks-app" id="dailyBlocksApp" aria-label="Блоки дня">
+    <button class="daily-blocks-open-layer" id="openBlocksFromSplit" type="button" aria-label="Открыть блоки дня"></button>
+    <header class="daily-blocks-header">
+      <div>
+        <div class="daily-blocks-kicker">72 блока по 20 минут</div>
+        <h1>Блоки дня</h1>
+        <p id="dailyBlocksTodayTitle">Сегодня</p>
+      </div>
+      <div class="daily-blocks-header-actions">
+        <button id="openBlocksStatsBtn" type="button" class="view-switch-button blocks-stats-button" aria-label="Открыть статистику">Статистика</button>
+        <button id="switchToLineBtn" type="button" class="view-switch-button" aria-label="Открыть линию">Линия</button>
+      </div>
+    </header>
+    <section class="daily-blocks-balance" aria-label="Баланс текущих периодов">
+      <div>
+        <span>День</span>
+        <strong id="blocksScoreDay">0</strong>
+      </div>
+      <div>
+        <span>Неделя</span>
+        <strong id="blocksScoreWeek">0</strong>
+      </div>
+      <div>
+        <span>Месяц</span>
+        <strong id="blocksScoreMonth">0</strong>
+      </div>
+      <div>
+        <span>Год</span>
+        <strong id="blocksScoreYear">0</strong>
+      </div>
+    </section>
+    <section class="daily-blocks-summary" id="dailyBlocksSummary" aria-label="Итоги дня"></section>
+    <section class="daily-blocks-stats-panel hidden" id="dailyBlocksStatsPanel" aria-label="Статистика блоков">
+      <div class="daily-blocks-stats-head">
+        <div>
+          <div class="daily-blocks-section-title">Статистика</div>
+          <p>Лучшие дни, недели, месяцы и годы.</p>
+        </div>
+        <button id="closeBlocksStatsBtn" type="button" class="view-switch-button" aria-label="Закрыть статистику">Закрыть</button>
+      </div>
+      <section class="daily-blocks-best" id="dailyBlocksBest" aria-label="Лучшие периоды"></section>
+    </section>
+    <section class="daily-blocks-list" id="dailyBlocksList" aria-label="Блоки текущего дня"></section>
+    <section class="daily-blocks-history" aria-label="История дней">
+      <div class="daily-blocks-section-title">Прошедшие дни</div>
+      <div id="dailyBlocksHistory"></div>
+    </section>
+  </section>
+  <button class="split-line-launcher" id="openLineFromSplit" type="button" aria-label="Открыть линию">
+    <span>Линия</span>
+    <strong>Открыть нижний экран</strong>
+  </button>
   <div class="pc-only-warning hidden" id="pcOnlyWarning">
     Этот режим доступен только на ПК. Откройте сайт на компьютере.
   </div>
@@ -24,7 +71,6 @@
     <button type="button" data-mobile-open="candleTimeframes" aria-label="Выбрать период свечей">Свечи</button>
     <button type="button" data-mobile-open="commentControls" aria-label="Комментарии к свечам">Коммент.</button>
     <button type="button" data-mobile-open="tasksTab" aria-label="Открыть задачи">Задачи</button>
-    <button type="button" data-mobile-open="disciplineTab" aria-label="Открыть дисциплину">Дисциплина</button>
     <button type="button" data-mobile-open="soundsTab" aria-label="Открыть звуки">Звуки</button>
     <button type="button" data-mobile-open="levelsPanel" aria-label="Настроить уровни">Уровни</button>
     <button type="button" data-mobile-open="dataControls" aria-label="Ссылка на сайт">Ссылка</button>
@@ -65,10 +111,6 @@
   </div>
   <div class="tasks-tab hidden" id="tasksTab">
     <button id="openTasksBtn" type="button">Задачи <span id="tasksTabBadge">0</span></button>
-  </div>
-
-  <div class="discipline-tab hidden" id="disciplineTab">
-    <button id="openDisciplineBtn" type="button">Дисциплина <span id="disciplineTabBadge">0</span></button>
   </div>
 
   <div class="sounds-tab hidden" id="soundsTab">
@@ -221,19 +263,6 @@
       </section>
     </div>
   </section>
-  <section class="discipline-page hidden" id="disciplinePage">
-    <div class="discipline-page-header">
-      <div>
-        <div class="discipline-page-title">Дисциплина</div>
-        <div class="discipline-page-subtitle" id="disciplineTodaySummary">Сегодня: 0 зеленых / 0 красных</div>
-      </div>
-      <button id="closeDisciplineBtn" type="button">Закрыть</button>
-    </div>
-    <div class="discipline-actions">
-      <button id="disciplinePenaltyBtn" type="button" class="danger">Горе тебе</button>
-    </div>
-    <div class="discipline-days" id="disciplineDays"></div>
-  </section>
   <section class="sounds-page hidden" id="soundsPage">
     <div class="sounds-page-header">
       <div>
@@ -325,47 +354,11 @@
     </div>
   </div>
   <div class="stats" id="stats">
-    <div>Значение Y: <span id="valueY">0.00</span></div>
-    <div>Изменение: <span id="deltaY">+0.00</span></div>
+    <button id="switchToBlocksBtn" type="button" class="stats-switch-button" aria-label="Перейти к блокам дня">Блоки</button>
   </div>
-  <div class="hint">
-    Зажмите левую кнопку мыши и ведите курсор вверх/вниз, чтобы менять направление.
-  </div>
+  <div class="hint" hidden></div>
   <div class="clock" id="clock">00:00.00</div>
   </main>
-  <iframe id="trackerFrame" class="tracker-tab-frame" src="trak/index.html" title="Tracker" loading="eager"></iframe>
-  <script>
-    (() => {
-      const STORAGE_KEY = "productiv-line-active-tab";
-      const tabs = Array.from(document.querySelectorAll("[data-app-tab]"));
-      const setActiveTab = (value) => {
-        const activeTab = value === "tracker" ? "tracker" : "line";
-        document.body.classList.toggle("app-tab-tracker", activeTab === "tracker");
-        document.body.classList.toggle("app-tab-line", activeTab === "line");
-        for (const tab of tabs) {
-          const isActive = tab.dataset.appTab === activeTab;
-          if (isActive) tab.setAttribute("aria-current", "page");
-          else tab.removeAttribute("aria-current");
-        }
-        try { localStorage.setItem(STORAGE_KEY, activeTab); } catch (_) {}
-        if (activeTab === "line") {
-          requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
-        }
-      };
-
-      for (const tab of tabs) {
-        tab.addEventListener("click", (event) => {
-          event.preventDefault();
-          setActiveTab(tab.dataset.appTab);
-        });
-      }
-
-      const hashTab = location.hash === "#tracker" ? "tracker" : location.hash === "#line" ? "line" : "";
-      let savedTab = "line";
-      try { savedTab = localStorage.getItem(STORAGE_KEY) || savedTab; } catch (_) {}
-      setActiveTab(hashTab || savedTab);
-    })();
-  </script>
   <script src="env.js"></script>
   <script type="module" src="script.js"></script>
 </body>

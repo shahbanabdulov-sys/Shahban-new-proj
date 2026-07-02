@@ -4,6 +4,23 @@ const appBrandNode = document.getElementById("appBrand");
 const valueYNode = document.getElementById("valueY");
 const deltaYNode = document.getElementById("deltaY");
 const clockNode = document.getElementById("clock");
+const dailyBlocksAppNode = document.getElementById("dailyBlocksApp");
+const openBlocksFromSplitBtn = document.getElementById("openBlocksFromSplit");
+const openLineFromSplitBtn = document.getElementById("openLineFromSplit");
+const switchToLineBtn = document.getElementById("switchToLineBtn");
+const switchToBlocksBtn = document.getElementById("switchToBlocksBtn");
+const openBlocksStatsBtn = document.getElementById("openBlocksStatsBtn");
+const closeBlocksStatsBtn = document.getElementById("closeBlocksStatsBtn");
+const dailyBlocksStatsPanelNode = document.getElementById("dailyBlocksStatsPanel");
+const dailyBlocksTodayTitleNode = document.getElementById("dailyBlocksTodayTitle");
+const dailyBlocksSummaryNode = document.getElementById("dailyBlocksSummary");
+const dailyBlocksBestNode = document.getElementById("dailyBlocksBest");
+const dailyBlocksListNode = document.getElementById("dailyBlocksList");
+const dailyBlocksHistoryNode = document.getElementById("dailyBlocksHistory");
+const blocksScoreDayNode = document.getElementById("blocksScoreDay");
+const blocksScoreWeekNode = document.getElementById("blocksScoreWeek");
+const blocksScoreMonthNode = document.getElementById("blocksScoreMonth");
+const blocksScoreYearNode = document.getElementById("blocksScoreYear");
 const timeframeNode = document.getElementById("timeframes");
 const viewTypesNode = document.getElementById("viewTypes");
 const candleTimeframesNode = document.getElementById("candleTimeframes");
@@ -180,6 +197,9 @@ let disciplineSavedAt = 0;
 let disciplineResetVersion = DISCIPLINE_RESET_VERSION;
 let pendingDisciplineCloudSave = false;
 let lastDisciplineAutoKey = "";
+let pendingDisciplineSaveTimer = 0;
+let activeAppView = "split";
+let shouldFocusCurrentBlockOnRender = false;
 let soundsEnabled = false;
 let soundVolume = 0.65;
 let soundRecords = [];
@@ -645,7 +665,20 @@ function getScheduledTimestampForDateKey(time, dateKey) {
 }
 
 function normalizeDisciplineCellState(value) {
-  return value === "green" || value === "red" || value === "gray" ? value : "";
+  const raw = value && typeof value === "object" ? value.state : value;
+  return raw === "green" || raw === "red" || raw === "gray" ? raw : "";
+}
+
+function normalizeDisciplineCell(value) {
+  if (value == null) return null;
+  const state = normalizeDisciplineCellState(value) || "gray";
+  const text = String(value && typeof value === "object" ? value.text || "" : "").trim().slice(0, 5000);
+  const rawRating = value && typeof value === "object" ? value.rating : null;
+  const ratingNumber = rawRating === "" || rawRating == null ? NaN : Number(rawRating);
+  const rating = Number.isFinite(ratingNumber)
+    ? Math.max(0, Math.min(10, Math.round(ratingNumber)))
+    : null;
+  return { state, text, rating };
 }
 
 function normalizeDisciplineDay(item) {
@@ -653,9 +686,9 @@ function normalizeDisciplineDay(item) {
   const rawCells = item?.cells && typeof item.cells === "object" ? item.cells : {};
   for (const [key, value] of Object.entries(rawCells)) {
     const index = Math.floor(toSafeNumber(Number(key), NaN));
-    const state = normalizeDisciplineCellState(value);
-    if (Number.isInteger(index) && index >= 0 && index < DISCIPLINE_SLOT_COUNT && state) {
-      cells[index] = state;
+    const cell = normalizeDisciplineCell(value);
+    if (Number.isInteger(index) && index >= 0 && index < DISCIPLINE_SLOT_COUNT && cell) {
+      cells[index] = cell;
     }
   }
 
@@ -756,6 +789,28 @@ function getDisciplineDay(dateKey, shouldCreate = false) {
   return disciplineDays[normalizedDate] || { cells: {}, penalties: [] };
 }
 
+function getDisciplineSlotCell(dateKey, slotIndex) {
+  const index = Math.floor(toSafeNumber(Number(slotIndex), NaN));
+  if (!Number.isInteger(index) || index < 0 || index >= DISCIPLINE_SLOT_COUNT) {
+    return { state: "gray", text: "", rating: null };
+  }
+  const day = getDisciplineDay(dateKey);
+  return normalizeDisciplineCell(day.cells?.[index]) || { state: "gray", text: "", rating: null };
+}
+
+function setDisciplineSlotCell(dateKey, slotIndex, patch) {
+  const normalizedDate = normalizeDateKey(dateKey);
+  const index = Math.floor(toSafeNumber(Number(slotIndex), NaN));
+  if (!normalizedDate || !Number.isInteger(index) || index < 0 || index >= DISCIPLINE_SLOT_COUNT) return null;
+  const day = getDisciplineDay(normalizedDate, true);
+  const current = getDisciplineSlotCell(normalizedDate, index);
+  const next = normalizeDisciplineCell({ ...current, ...patch }) || { state: "gray", text: "", rating: null };
+  const hasContent = next.state !== "gray" || next.text || next.rating !== null;
+  if (hasContent) day.cells[index] = next;
+  else delete day.cells[index];
+  return next;
+}
+
 function getDisciplineDayStart(dateKey) {
   const d = dateKeyToLocalDate(dateKey);
   return d ? d.getTime() : NaN;
@@ -768,10 +823,7 @@ function isDisciplineSlotAutoGreen(dateKey, slotIndex, now = Date.now()) {
 }
 
 function getDisciplineSlotState(dateKey, slotIndex, now = Date.now()) {
-  const day = getDisciplineDay(dateKey);
-  const override = normalizeDisciplineCellState(day.cells?.[slotIndex]);
-  if (override) return override;
-  return "gray";
+  return getDisciplineSlotCell(dateKey, slotIndex).state || "gray";
 }
 
 function getNextDisciplineCellState(currentState) {
@@ -783,13 +835,30 @@ function getNextDisciplineCellState(currentState) {
 function getDisciplineDayStats(dateKey, now = Date.now()) {
   const day = getDisciplineDay(dateKey);
   let green = 0;
-  let red = Array.isArray(day.penalties) ? day.penalties.length : 0;
+  let red = 0;
+  let gray = 0;
+  let ratingSum = 0;
+  let rated = 0;
   for (let index = 0; index < DISCIPLINE_SLOT_COUNT; index += 1) {
-    const state = getDisciplineSlotState(dateKey, index, now);
+    const cell = getDisciplineSlotCell(dateKey, index);
+    const state = cell.state;
     if (state === "green") green += 1;
-    if (state === "red") red += 1;
+    else if (state === "red") red += 1;
+    else gray += 1;
+    if (cell.rating !== null) {
+      ratingSum += cell.rating;
+      rated += 1;
+    }
   }
-  return { green, red };
+  return {
+    green,
+    red,
+    gray,
+    rated,
+    averageRating: rated > 0 ? ratingSum / rated : null,
+    score: green - red,
+    filled: Object.keys(day.cells || {}).length,
+  };
 }
 
 function getDisciplineDateKeys(now = Date.now()) {
@@ -1160,8 +1229,9 @@ async function saveProgressForCurrentUser(snapshot = null) {
 const saveUserData = saveProgressForCurrentUser;
 
 function resizeCanvas() {
-  width = window.innerWidth;
-  height = window.innerHeight;
+  const rect = canvas.getBoundingClientRect();
+  width = Math.max(1, Math.round(rect.width || window.innerWidth));
+  height = Math.max(1, Math.round(rect.height || window.innerHeight));
   canvas.width = width;
   canvas.height = height;
 }
@@ -1688,6 +1758,339 @@ function formatDisciplineHour(hour) {
   return `${String(hour).padStart(2, "0")}:00`;
 }
 
+function formatSignedInteger(value) {
+  const number = Math.round(toSafeNumber(Number(value), 0));
+  return number > 0 ? `+${number}` : String(number);
+}
+
+function formatAverageRating(value) {
+  return value === null || value === undefined ? "—" : value.toFixed(1);
+}
+
+function formatBlockDateTitle(dateKey) {
+  const d = dateKeyToLocalDate(dateKey);
+  if (!d) return dateKey || "";
+  const date = d.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric" });
+  const shortDay = d.toLocaleDateString("ru-RU", { weekday: "short" }).replace(".", "");
+  const longDay = d.toLocaleDateString("ru-RU", { weekday: "long" });
+  return `${date} ${shortDay} (${longDay.charAt(0).toUpperCase()}${longDay.slice(1)})`;
+}
+
+function getCurrentDisciplineSlotIndex(now = Date.now()) {
+  const today = getLocalDateKey(now);
+  const start = getDisciplineDayStart(today);
+  if (!Number.isFinite(start)) return 0;
+  return Math.max(0, Math.min(DISCIPLINE_SLOT_COUNT - 1, Math.floor((now - start) / DISCIPLINE_SLOT_MS)));
+}
+
+function formatDisciplineSlotTime(slotIndex) {
+  const startMinutes = Math.max(0, Math.min(DISCIPLINE_SLOT_COUNT - 1, slotIndex)) * 20;
+  const endMinutes = startMinutes + 20;
+  const startHour = Math.floor(startMinutes / 60);
+  const startMinute = startMinutes % 60;
+  const endHour = Math.floor(endMinutes / 60) % 24;
+  const endMinute = endMinutes % 60;
+  return `${String(startHour).padStart(2, "0")}:${String(startMinute).padStart(2, "0")}–${String(endHour).padStart(2, "0")}:${String(endMinute).padStart(2, "0")}`;
+}
+
+function getWeekStartDateKey(dateKey) {
+  const d = dateKeyToLocalDate(dateKey);
+  if (!d) return "";
+  const day = d.getDay() || 7;
+  d.setDate(d.getDate() - day + 1);
+  return getLocalDateKey(d.getTime());
+}
+
+function getMonthKey(dateKey) {
+  const normalized = normalizeDateKey(dateKey);
+  return normalized ? normalized.slice(0, 7) : "";
+}
+
+function getYearKey(dateKey) {
+  const normalized = normalizeDateKey(dateKey);
+  return normalized ? normalized.slice(0, 4) : "";
+}
+
+function combineDisciplineStats(items) {
+  const result = { green: 0, red: 0, gray: 0, rated: 0, ratingSum: 0, score: 0 };
+  for (const item of items) {
+    result.green += item.green || 0;
+    result.red += item.red || 0;
+    result.gray += item.gray || 0;
+    result.rated += item.rated || 0;
+    result.ratingSum += (item.averageRating || 0) * (item.rated || 0);
+    result.score += item.score || 0;
+  }
+  result.averageRating = result.rated > 0 ? result.ratingSum / result.rated : null;
+  return result;
+}
+
+function getDisciplineStatsForDateKeys(dateKeys, now = Date.now()) {
+  return combineDisciplineStats(dateKeys.map((dateKey) => getDisciplineDayStats(dateKey, now)));
+}
+
+function getDateKeysForCurrentPeriod(period, now = Date.now()) {
+  const today = getLocalDateKey(now);
+  const allKeys = getDisciplineDateKeys(now);
+  if (period === "day") return [today];
+  if (period === "week") {
+    const weekStart = getWeekStartDateKey(today);
+    return allKeys.filter((dateKey) => getWeekStartDateKey(dateKey) === weekStart);
+  }
+  if (period === "month") {
+    const month = getMonthKey(today);
+    return allKeys.filter((dateKey) => getMonthKey(dateKey) === month);
+  }
+  if (period === "year") {
+    const year = getYearKey(today);
+    return allKeys.filter((dateKey) => getYearKey(dateKey) === year);
+  }
+  return allKeys;
+}
+
+function findBestDisciplineGroup(dateKeys, groupKeyFn, labelFn, now = Date.now()) {
+  const groups = new Map();
+  for (const dateKey of dateKeys) {
+    const groupKey = groupKeyFn(dateKey);
+    if (!groupKey) continue;
+    if (!groups.has(groupKey)) groups.set(groupKey, []);
+    groups.get(groupKey).push(dateKey);
+  }
+
+  let best = null;
+  for (const [groupKey, keys] of groups.entries()) {
+    const stats = getDisciplineStatsForDateKeys(keys, now);
+    const item = { key: groupKey, label: labelFn(groupKey, keys), stats };
+    if (!best || item.stats.score > best.stats.score || (
+      item.stats.score === best.stats.score &&
+      (item.stats.averageRating || -1) > (best.stats.averageRating || -1)
+    )) {
+      best = item;
+    }
+  }
+  return best;
+}
+
+function setScoreText(node, value) {
+  if (!node) return;
+  node.textContent = formatSignedInteger(value);
+  node.classList.toggle("is-positive", value > 0);
+  node.classList.toggle("is-negative", value < 0);
+}
+
+function createBlockMetric(label, value, tone = "") {
+  const item = document.createElement("div");
+  item.className = `daily-blocks-metric ${tone}`.trim();
+  const small = document.createElement("span");
+  small.textContent = label;
+  const strong = document.createElement("strong");
+  strong.textContent = value;
+  item.appendChild(small);
+  item.appendChild(strong);
+  return item;
+}
+
+function scheduleCurrentBlockScroll(focusText = false) {
+  if (!dailyBlocksListNode) return;
+  requestAnimationFrame(() => {
+    const currentCard = dailyBlocksListNode.querySelector(".daily-block-card.is-current");
+    if (!currentCard) return;
+    const container = dailyBlocksAppNode || currentCard.parentElement;
+    if (container) {
+      const top = currentCard.offsetTop - Math.max(0, (container.clientHeight - currentCard.offsetHeight) / 2);
+      container.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+    } else {
+      currentCard.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+    if (focusText) {
+      const text = currentCard.querySelector("textarea[data-block-text]");
+      setTimeout(() => text?.focus({ preventScroll: true }), 180);
+    }
+  });
+}
+
+function autoSizeBlockTextarea(textarea) {
+  if (!textarea) return;
+  textarea.style.height = "auto";
+  textarea.style.height = `${Math.max(textarea.scrollHeight, 168)}px`;
+}
+
+function renderDailyBlocksHeader(today, todayStats, now) {
+  if (dailyBlocksTodayTitleNode) {
+    dailyBlocksTodayTitleNode.textContent = formatBlockDateTitle(today);
+  }
+
+  const periodStats = {
+    day: todayStats,
+    week: getDisciplineStatsForDateKeys(getDateKeysForCurrentPeriod("week", now), now),
+    month: getDisciplineStatsForDateKeys(getDateKeysForCurrentPeriod("month", now), now),
+    year: getDisciplineStatsForDateKeys(getDateKeysForCurrentPeriod("year", now), now),
+  };
+  setScoreText(blocksScoreDayNode, periodStats.day.score);
+  setScoreText(blocksScoreWeekNode, periodStats.week.score);
+  setScoreText(blocksScoreMonthNode, periodStats.month.score);
+  setScoreText(blocksScoreYearNode, periodStats.year.score);
+
+  if (dailyBlocksSummaryNode) {
+    dailyBlocksSummaryNode.innerHTML = "";
+    dailyBlocksSummaryNode.appendChild(createBlockMetric("Зеленые", String(todayStats.green), "is-green"));
+    dailyBlocksSummaryNode.appendChild(createBlockMetric("Красные", String(todayStats.red), "is-red"));
+    dailyBlocksSummaryNode.appendChild(createBlockMetric("Серые", String(todayStats.gray), "is-gray"));
+    dailyBlocksSummaryNode.appendChild(createBlockMetric("Средняя", formatAverageRating(todayStats.averageRating), "is-rating"));
+    dailyBlocksSummaryNode.appendChild(createBlockMetric("Баланс", formatSignedInteger(todayStats.score), todayStats.score < 0 ? "is-red" : "is-green"));
+  }
+}
+
+function renderDailyBlocksBest(now = Date.now()) {
+  if (!dailyBlocksBestNode) return;
+  const allKeys = getDisciplineDateKeys(now);
+  const today = getLocalDateKey(now);
+  const lastWeekKeys = allKeys.filter((dateKey) => {
+    const diff = diffDateKeys(today, dateKey);
+    return diff >= 0 && diff < 7;
+  });
+  const bestAllDay = findBestDisciplineGroup(allKeys, (dateKey) => dateKey, (key) => formatDateKeyLong(key), now);
+  const bestLastWeekDay = findBestDisciplineGroup(lastWeekKeys, (dateKey) => dateKey, (key) => formatDateKeyLong(key), now);
+  const bestWeek = findBestDisciplineGroup(
+    allKeys,
+    getWeekStartDateKey,
+    (weekStart) => `${formatDateKeyLong(weekStart)} - ${formatDateKeyShort(addDaysToDateKey(weekStart, 6))}`,
+    now
+  );
+  const bestMonth = findBestDisciplineGroup(allKeys, getMonthKey, (month) => {
+    const [year, monthNumber] = month.split("-").map(Number);
+    return new Date(year, monthNumber - 1, 1).toLocaleDateString("ru-RU", { month: "long", year: "numeric" });
+  }, now);
+  const bestYear = findBestDisciplineGroup(allKeys, getYearKey, (year) => `${year} год`, now);
+  const items = [
+    ["Лучший день", bestAllDay],
+    ["Лучший за 7 дней", bestLastWeekDay],
+    ["Лучшая неделя", bestWeek],
+    ["Лучший месяц", bestMonth],
+    ["Лучший год", bestYear],
+  ];
+
+  dailyBlocksBestNode.innerHTML = "";
+  for (const [label, item] of items) {
+    const row = document.createElement("div");
+    row.className = "daily-blocks-best-item";
+    const text = document.createElement("span");
+    text.textContent = label;
+    const value = document.createElement("strong");
+    value.textContent = item ? `${item.label}: ${formatSignedInteger(item.stats.score)}` : "—";
+    row.appendChild(text);
+    row.appendChild(value);
+    dailyBlocksBestNode.appendChild(row);
+  }
+}
+
+function renderDailyBlockCard(dateKey, slotIndex, currentSlotIndex) {
+  const cell = getDisciplineSlotCell(dateKey, slotIndex);
+  const card = document.createElement("article");
+  card.className = `daily-block-card is-${cell.state}`;
+  card.dataset.dateKey = dateKey;
+  card.dataset.slotIndex = String(slotIndex);
+  card.classList.toggle("is-current", slotIndex === currentSlotIndex);
+
+  const top = document.createElement("div");
+  top.className = "daily-block-card-top";
+  const title = document.createElement("div");
+  title.innerHTML = `<strong>${formatDisciplineSlotTime(slotIndex)}</strong>`;
+  const state = document.createElement("span");
+  state.className = "daily-block-state-label";
+  state.textContent = cell.state === "green" ? "Зеленый" : cell.state === "red" ? "Красный" : "Серый";
+  top.appendChild(title);
+  top.appendChild(state);
+  card.appendChild(top);
+
+  const textarea = document.createElement("textarea");
+  textarea.dataset.blockText = "1";
+  textarea.dataset.dateKey = dateKey;
+  textarea.dataset.slotIndex = String(slotIndex);
+  textarea.rows = 8;
+  textarea.placeholder = "Напишите задачу для этого блока";
+  textarea.value = cell.text || "";
+  card.appendChild(textarea);
+  requestAnimationFrame(() => autoSizeBlockTextarea(textarea));
+
+  const colors = document.createElement("div");
+  colors.className = "daily-block-colors";
+  const colorOptions = [
+    ["gray", "Серый"],
+    ["green", "Зеленый"],
+    ["red", "Красный"],
+  ];
+  for (const [value, label] of colorOptions) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.blockState = value;
+    button.dataset.dateKey = dateKey;
+    button.dataset.slotIndex = String(slotIndex);
+    button.className = `daily-block-color is-${value}`;
+    button.classList.toggle("is-active", cell.state === value);
+    button.textContent = label;
+    colors.appendChild(button);
+  }
+  card.appendChild(colors);
+
+  const rating = document.createElement("div");
+  rating.className = "daily-block-rating";
+  const ratingLabel = document.createElement("span");
+  ratingLabel.textContent = "Оценка";
+  rating.appendChild(ratingLabel);
+  const clear = document.createElement("button");
+  clear.type = "button";
+  clear.dataset.blockRatingClear = "1";
+  clear.dataset.dateKey = dateKey;
+  clear.dataset.slotIndex = String(slotIndex);
+  clear.classList.toggle("is-active", cell.rating === null);
+  clear.textContent = "—";
+  rating.appendChild(clear);
+  for (let value = 0; value <= 10; value += 1) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.blockRating = String(value);
+    button.dataset.dateKey = dateKey;
+    button.dataset.slotIndex = String(slotIndex);
+    button.classList.toggle("is-active", cell.rating === value);
+    button.textContent = String(value);
+    rating.appendChild(button);
+  }
+  card.appendChild(rating);
+
+  return card;
+}
+
+function renderDailyBlocksHistory(now = Date.now()) {
+  if (!dailyBlocksHistoryNode) return;
+  const today = getLocalDateKey(now);
+  const keys = getDisciplineDateKeys(now)
+    .filter((dateKey) => dateKey !== today)
+    .slice(0, 30);
+
+  dailyBlocksHistoryNode.innerHTML = "";
+  if (!keys.length) {
+    const empty = document.createElement("div");
+    empty.className = "daily-blocks-history-empty";
+    empty.textContent = "История появится после первого завершенного дня.";
+    dailyBlocksHistoryNode.appendChild(empty);
+    return;
+  }
+
+  for (const dateKey of keys) {
+    const stats = getDisciplineDayStats(dateKey, now);
+    const row = document.createElement("div");
+    row.className = "daily-blocks-history-day";
+    const title = document.createElement("strong");
+    title.textContent = formatBlockDateTitle(dateKey);
+    const meta = document.createElement("span");
+    meta.textContent = `${stats.green} зеленых, ${stats.red} красных, ${stats.gray} серых · средняя ${formatAverageRating(stats.averageRating)} · баланс ${formatSignedInteger(stats.score)}`;
+    row.appendChild(title);
+    row.appendChild(meta);
+    dailyBlocksHistoryNode.appendChild(row);
+  }
+}
+
 function renderDisciplineUi() {
   const now = Date.now();
   const today = getLocalDateKey(now);
@@ -1698,76 +2101,24 @@ function renderDisciplineUi() {
   if (disciplineTodaySummaryNode) {
     disciplineTodaySummaryNode.textContent = `Сегодня: ${todayStats.green} зеленых / ${todayStats.red} красных`;
   }
-  if (!disciplineDaysNode) return;
 
-  const dateKeys = getDisciplineDateKeys(now);
-  disciplineDaysNode.innerHTML = "";
-  for (const dateKey of dateKeys) {
-    const stats = getDisciplineDayStats(dateKey, now);
-    const dayNumber = Math.max(1, diffDateKeys(dateKey, disciplineStartDate) + 1);
-    const card = document.createElement("section");
-    card.className = "discipline-day";
-    card.classList.toggle("today", dateKey === today);
+  renderDailyBlocksHeader(today, todayStats, now);
+  renderDailyBlocksBest(now);
+  renderDailyBlocksHistory(now);
 
-    const head = document.createElement("div");
-    head.className = "discipline-day-head";
-
-    const title = document.createElement("div");
-    title.className = "discipline-day-title";
-    title.textContent = `День ${dayNumber} - ${formatDateKeyLong(dateKey)}`;
-
-    const summary = document.createElement("div");
-    summary.className = "discipline-day-summary";
-    summary.textContent = `${stats.green} зеленых / ${stats.red} красных`;
-
-    head.appendChild(title);
-    head.appendChild(summary);
-    card.appendChild(head);
-
-    const grid = document.createElement("div");
-    grid.className = "discipline-hours";
-
-    const day = getDisciplineDay(dateKey);
-    for (let hour = 0; hour < DISCIPLINE_HOURS_PER_DAY; hour += 1) {
-      const row = document.createElement("div");
-      row.className = "discipline-hour";
-      row.classList.toggle("current", dateKey === today && hour === new Date(now).getHours());
-
-      const label = document.createElement("div");
-      label.className = "discipline-hour-label";
-      label.textContent = formatDisciplineHour(hour);
-      row.appendChild(label);
-
-      const squares = document.createElement("div");
-      squares.className = "discipline-squares";
-      for (let segment = 0; segment < DISCIPLINE_SLOTS_PER_HOUR; segment += 1) {
-        const slotIndex = hour * DISCIPLINE_SLOTS_PER_HOUR + segment;
-        const state = getDisciplineSlotState(dateKey, slotIndex, now);
-        const square = document.createElement("button");
-        square.type = "button";
-        square.className = `discipline-square ${state}`;
-        square.dataset.dateKey = dateKey;
-        square.dataset.slotIndex = String(slotIndex);
-        square.setAttribute("aria-label", `${formatDisciplineHour(hour)} блок ${segment + 1}: ${state}`);
-        squares.appendChild(square);
-      }
-
-      const penalties = Array.isArray(day.penalties)
-        ? day.penalties.filter((penalty) => penalty.hour === hour)
-        : [];
-      for (let extraIndex = 0; extraIndex < penalties.length; extraIndex += 1) {
-        const square = document.createElement("span");
-        square.className = "discipline-square red penalty";
-        squares.appendChild(square);
-      }
-
-      row.appendChild(squares);
-      grid.appendChild(row);
-    }
-
-    card.appendChild(grid);
-    disciplineDaysNode.appendChild(card);
+  if (!dailyBlocksListNode) return;
+  const activeElement = document.activeElement;
+  const keepTyping = activeElement && dailyBlocksListNode.contains(activeElement);
+  const currentSlotIndex = getCurrentDisciplineSlotIndex(now);
+  dailyBlocksListNode.innerHTML = "";
+  for (let slotIndex = 0; slotIndex < DISCIPLINE_SLOT_COUNT; slotIndex += 1) {
+    dailyBlocksListNode.appendChild(renderDailyBlockCard(today, slotIndex, currentSlotIndex));
   }
+
+  if (!keepTyping && activeAppView !== "line") {
+    scheduleCurrentBlockScroll(shouldFocusCurrentBlockOnRender);
+  }
+  shouldFocusCurrentBlockOnRender = false;
 }
 
 function updateDisciplineAutoProgress(now = Date.now()) {
@@ -1783,11 +2134,27 @@ function updateDisciplineAutoProgress(now = Date.now()) {
 }
 
 function saveDisciplineProgress() {
+  if (pendingDisciplineSaveTimer) {
+    clearTimeout(pendingDisciplineSaveTimer);
+    pendingDisciplineSaveTimer = 0;
+  }
   disciplineSavedAt = Date.now();
   writeLocalDisciplineForCurrentUser();
   const snapshot = saveLocalProgressForCurrentUser() || saveFastProgressForCurrentUser();
   if (currentUser?.id) pendingDisciplineCloudSave = true;
   flushPendingDisciplineCloudSave(snapshot || getFastSnapshot());
+}
+
+function queueDisciplineProgressSave() {
+  disciplineSavedAt = Date.now();
+  writeLocalDisciplineForCurrentUser();
+  const snapshot = saveLocalProgressForCurrentUser() || saveFastProgressForCurrentUser();
+  if (currentUser?.id) pendingDisciplineCloudSave = true;
+  if (pendingDisciplineSaveTimer) clearTimeout(pendingDisciplineSaveTimer);
+  pendingDisciplineSaveTimer = setTimeout(() => {
+    pendingDisciplineSaveTimer = 0;
+    flushPendingDisciplineCloudSave(snapshot || getFastSnapshot());
+  }, 650);
 }
 
 function flushPendingDisciplineCloudSave(snapshot = null) {
@@ -1966,6 +2333,29 @@ function getNextPendingTask(now = Date.now()) {
     return list.find((occurrence) => occurrence.scheduledAt >= now) || list[0];
   }
   return null;
+}
+
+function setAppView(view, options = {}) {
+  const nextView = view === "blocks" || view === "line" ? view : "split";
+  activeAppView = nextView;
+  document.body.classList.toggle("app-view-split", nextView === "split");
+  document.body.classList.toggle("app-view-blocks", nextView === "blocks");
+  document.body.classList.toggle("app-view-line", nextView === "line");
+  closeMobilePanels();
+  if (nextView !== "blocks") {
+    dailyBlocksStatsPanelNode?.classList.add("hidden");
+  }
+  if (nextView === "blocks") {
+    shouldFocusCurrentBlockOnRender = options.focusCurrent === true;
+    renderDisciplineUi();
+  }
+  if (nextView === "split") {
+    renderDisciplineUi();
+  }
+  requestAnimationFrame(() => {
+    resizeCanvas();
+    render();
+  });
 }
 
 function openTasksPage() {
@@ -2452,9 +2842,9 @@ function toDisplayValue(rawValue) {
 function updateHud() {
   const currentDisplay = toDisplayValue(currentValue);
   const previousDisplay = toDisplayValue(previousValue);
-  valueYNode.textContent = currentDisplay.toFixed(2);
-  deltaYNode.textContent = formatSigned(currentDisplay - previousDisplay);
-  clockNode.textContent = formatClock(new Date());
+  if (valueYNode) valueYNode.textContent = currentDisplay.toFixed(2);
+  if (deltaYNode) deltaYNode.textContent = formatSigned(currentDisplay - previousDisplay);
+  if (clockNode) clockNode.textContent = formatClock(new Date());
   if (selectedMode === "view" && selectedViewType === "candles") {
     const candleMs = candleRangeMap[selectedCandleRange];
     const now = Date.now();
@@ -3011,9 +3401,7 @@ function setMode(mode) {
   timeframeNode.classList.toggle("hidden", !showLineTf);
   candleTimeframesNode.classList.toggle("hidden", !showCandleTf);
   commentControlsNode.classList.toggle("hidden", !showCandleTf);
-  hintNode.textContent = mode === "live"
-    ? "Зажмите левую кнопку мыши и ведите курсор вверх/вниз, чтобы менять направление."
-    : "Просмотр: выберите тип графика и таймфрейм.";
+  if (hintNode) hintNode.textContent = "";
   layoutControls();
   syncMobileToolbarButtons();
   render();
@@ -3343,6 +3731,40 @@ disciplineDaysNode?.addEventListener("click", (event) => {
   renderDisciplineUi();
 });
 
+dailyBlocksListNode?.addEventListener("click", (event) => {
+  const stateButton = event.target.closest("button[data-block-state]");
+  if (stateButton) {
+    const dateKey = normalizeDateKey(stateButton.dataset.dateKey);
+    const slotIndex = Math.floor(toSafeNumber(Number(stateButton.dataset.slotIndex), NaN));
+    if (!dateKey || !Number.isInteger(slotIndex)) return;
+    setDisciplineSlotCell(dateKey, slotIndex, { state: stateButton.dataset.blockState });
+    saveDisciplineProgress();
+    renderDisciplineUi();
+    return;
+  }
+
+  const ratingButton = event.target.closest("button[data-block-rating], button[data-block-rating-clear]");
+  if (!ratingButton) return;
+  const dateKey = normalizeDateKey(ratingButton.dataset.dateKey);
+  const slotIndex = Math.floor(toSafeNumber(Number(ratingButton.dataset.slotIndex), NaN));
+  if (!dateKey || !Number.isInteger(slotIndex)) return;
+  const rating = ratingButton.dataset.blockRatingClear ? null : Number(ratingButton.dataset.blockRating);
+  setDisciplineSlotCell(dateKey, slotIndex, { rating });
+  saveDisciplineProgress();
+  renderDisciplineUi();
+});
+
+dailyBlocksListNode?.addEventListener("input", (event) => {
+  const textarea = event.target.closest("textarea[data-block-text]");
+  if (!textarea) return;
+  const dateKey = normalizeDateKey(textarea.dataset.dateKey);
+  const slotIndex = Math.floor(toSafeNumber(Number(textarea.dataset.slotIndex), NaN));
+  if (!dateKey || !Number.isInteger(slotIndex)) return;
+  autoSizeBlockTextarea(textarea);
+  setDisciplineSlotCell(dateKey, slotIndex, { text: textarea.value });
+  queueDisciplineProgressSave();
+});
+
 tasksGlobalEnabledInput?.addEventListener("change", () => {
   tasksGlobalEnabled = tasksGlobalEnabledInput.checked;
   saveProgressForCurrentUser();
@@ -3474,6 +3896,18 @@ mobileToolbarNode?.addEventListener("click", (event) => {
 
 mobileOverlayNode?.addEventListener("click", () => {
   closeMobilePanels();
+});
+
+openBlocksFromSplitBtn?.addEventListener("click", () => setAppView("blocks", { focusCurrent: true }));
+openLineFromSplitBtn?.addEventListener("click", () => setAppView("line"));
+switchToLineBtn?.addEventListener("click", () => setAppView("line"));
+switchToBlocksBtn?.addEventListener("click", () => setAppView("blocks", { focusCurrent: true }));
+openBlocksStatsBtn?.addEventListener("click", () => {
+  renderDailyBlocksBest();
+  dailyBlocksStatsPanelNode?.classList.remove("hidden");
+});
+closeBlocksStatsBtn?.addEventListener("click", () => {
+  dailyBlocksStatsPanelNode?.classList.add("hidden");
 });
 
 window.addEventListener("keydown", (event) => {
@@ -3658,6 +4092,7 @@ renderLevelsUi();
 renderTasksUi();
 renderDisciplineUi();
 renderSoundsUi();
+setAppView(location.hash === "#blocks" ? "blocks" : location.hash === "#line" ? "line" : "split");
 if (location.protocol.startsWith("http")) {
   setShareLink(`Ссылка: ${location.origin}/`);
 } else {
